@@ -79,7 +79,7 @@
   <div id="char" title="Click me!">
     <img id="charimg" alt="buddy">
     <svg id="charsvg" viewBox="-60 -60 120 120">
-      <g id="figure">
+      <g id="body-critter">
         <ellipse class="foot" cx="-13" cy="31" rx="9" ry="5"/>
         <ellipse class="foot" cx="13" cy="31" rx="9" ry="5"/>
         <circle class="ear" cx="-17" cy="-25" r="10"/>
@@ -87,19 +87,40 @@
         <circle class="earin" cx="-17" cy="-25" r="4.5"/>
         <circle class="earin" cx="17" cy="-25" r="4.5"/>
         <ellipse id="body" cx="0" cy="3" rx="30" ry="28"/>
-        <g id="face">
-          <circle class="cheek" cx="-17" cy="6" r="5"/>
-          <circle class="cheek" cx="17" cy="6" r="5"/>
-          <circle class="eye" cx="-10" cy="-5" r="6.5"/>
-          <circle class="eye" cx="10" cy="-5" r="6.5"/>
-          <circle class="pupil" id="pl" cx="-9" cy="-5" r="3"/>
-          <circle class="pupil" id="pr" cx="11" cy="-5" r="3"/>
-          <line class="lid" id="lidl" x1="-15" y1="-5" x2="-5" y2="-5"/>
-          <line class="lid" id="lidr" x1="5" y1="-5" x2="15" y2="-5"/>
-          <g class="xeye" id="xl"><line x1="-14" y1="-9" x2="-6" y2="-1"/><line x1="-6" y1="-9" x2="-14" y2="-1"/></g>
-          <g class="xeye" id="xr"><line x1="6" y1="-9" x2="14" y2="-1"/><line x1="14" y1="-9" x2="6" y2="-1"/></g>
-          <path id="mouth" d="M -7 9 Q 0 14 7 9"/>
-        </g>
+      </g>
+      <g id="body-robot" style="display:none">
+        <line x1="0" y1="-42" x2="0" y2="-27" stroke="#8a97a8" stroke-width="3"/>
+        <circle cx="0" cy="-46" r="5" fill="#e06c5a"/>
+        <rect x="-30" y="-27" width="60" height="57" rx="12" fill="#aab6c6"/>
+        <rect x="-24" y="-20" width="48" height="36" rx="8" fill="#3d4654"/>
+        <rect x="-25" y="28" width="17" height="8" rx="3" fill="#8a97a8"/>
+        <rect x="8" y="28" width="17" height="8" rx="3" fill="#8a97a8"/>
+      </g>
+      <g id="body-cat" style="display:none">
+        <path d="M 25 16 Q 47 12 43 -8" stroke="#848a94" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <path d="M -27 -12 L -21 -35 L -7 -20 Z" fill="#848a94"/>
+        <path d="M 27 -12 L 21 -35 L 7 -20 Z" fill="#848a94"/>
+        <path d="M -22 -17 L -19 -28 L -12 -21 Z" fill="#e8b6c0"/>
+        <path d="M 22 -17 L 19 -28 L 12 -21 Z" fill="#e8b6c0"/>
+        <ellipse class="catfoot" cx="-13" cy="30" rx="8" ry="5" fill="#848a94"/>
+        <ellipse class="catfoot" cx="13" cy="30" rx="8" ry="5" fill="#848a94"/>
+        <ellipse cx="0" cy="3" rx="29" ry="27" fill="#9aa0aa"/>
+      </g>
+      <g id="body-ghost" style="display:none">
+        <path d="M -28 31 L -28 -2 A 28 28 0 0 1 28 -2 L 28 31 L 18.5 23 L 9.5 31 L 0 23 L -9.5 31 L -18.5 23 Z" fill="#dfe6f2" stroke="#b9c4d8" stroke-width="1.5"/>
+      </g>
+      <g id="face">
+        <circle class="cheek" cx="-17" cy="6" r="5"/>
+        <circle class="cheek" cx="17" cy="6" r="5"/>
+        <circle class="eye" cx="-10" cy="-5" r="6.5"/>
+        <circle class="eye" cx="10" cy="-5" r="6.5"/>
+        <circle class="pupil" id="pl" cx="-9" cy="-5" r="3"/>
+        <circle class="pupil" id="pr" cx="11" cy="-5" r="3"/>
+        <line class="lid" id="lidl" x1="-15" y1="-5" x2="-5" y2="-5"/>
+        <line class="lid" id="lidr" x1="5" y1="-5" x2="15" y2="-5"/>
+        <g class="xeye" id="xl"><line x1="-14" y1="-9" x2="-6" y2="-1"/><line x1="-6" y1="-9" x2="-14" y2="-1"/></g>
+        <g class="xeye" id="xr"><line x1="6" y1="-9" x2="14" y2="-1"/><line x1="14" y1="-9" x2="6" y2="-1"/></g>
+        <path id="mouth" d="M -7 9 Q 0 14 7 9"/>
       </g>
     </svg>
   </div>
@@ -132,6 +153,14 @@
     charimg.style.display = 'block';
     charsvg.style.display = 'none';
   }
+
+  const CHARACTER = "{{char}}";
+  const BODIES = ['body-critter', 'body-robot', 'body-cat', 'body-ghost'];
+  const activeBody = 'body-' + CHARACTER;
+  BODIES.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = (BODIES.indexOf(activeBody) >= 0 ? id === activeBody : id === 'body-critter') ? '' : 'none';
+  });
 
   let data = { state: 'idle' };
   let x = 60, targetX = 200, bubbleTimer = null, lastFx = 0;
@@ -203,15 +232,24 @@
     setTimeout(() => el.remove(), 1700);
   }
 
+  const show = (id, on) => document.getElementById(id).style.display = on ? '' : 'none';
+  let napping = false;
+  // Eyes close only while resting between strolls (or on error) — the buddy
+  // roams in every state now, so "idle" is a stroll, not a statue.
+  function setNap(on) {
+    if (imgMode || napping === on) return;
+    napping = on;
+    const dead = data.state === 'error';
+    show('lidl', on && !dead); show('lidr', on && !dead);
+    show('pl', !on && !dead); show('pr', !on && !dead);
+  }
   function setFace(state) {
     if (imgMode) return;
-    const show = (id, on) => document.getElementById(id).style.display = on ? '' : 'none';
-    const sleeping = state === 'idle';
     const dead = state === 'error';
-    show('lidl', sleeping); show('lidr', sleeping);
     show('xl', dead); show('xr', dead);
-    document.getElementById('pl').style.display = (sleeping || dead) ? 'none' : '';
-    document.getElementById('pr').style.display = (sleeping || dead) ? 'none' : '';
+    show('lidl', false); show('lidr', false);
+    show('pl', !dead); show('pr', !dead);
+    napping = false;
     mouth.setAttribute('d',
       state === 'done' ? 'M -8 7 Q 0 16 8 7' :
       state === 'error' ? 'M -7 12 Q 0 7 7 12' :
@@ -228,7 +266,7 @@
       ' scaleX(' + (dir * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
   }
 
-  let lastTs = 0;
+  let lastTs = 0, pauseUntil = 0;
   function loop(ts) {
     bobT = ts / 1000;
     // Scale by real elapsed time so speed is identical on 60Hz and 120Hz.
@@ -236,18 +274,28 @@
     lastTs = ts;
     const steps = dt / 16.7;
     const w = Math.max(120, stage.clientWidth);
-    const speed = data.state === 'working' ? 1.6 : data.state === 'done' ? 1.0 : data.state === 'idle' ? 0 : 0.45;
-    moving = !reduced && speed > 0;
+    // Every state roams now — idle is a lazy stroll with naps at rest stops.
+    const speed = data.state === 'working' ? 1.6 : data.state === 'done' ? 1.0 : data.state === 'idle' ? 0.35 : 0.5;
+    const resting = ts < pauseUntil;
+    moving = !reduced && !resting;
     if (moving) {
-      if (Math.abs(targetX - x) < 8) targetX = 20 + Math.random() * (w - 116);
-      dir = targetX > x ? 1 : -1;
-      x += dir * speed * steps;
+      const step = speed * steps;
+      if (Math.abs(targetX - x) <= step) {
+        x = targetX;
+        targetX = 20 + Math.random() * Math.max(1, w - 116);
+        // Idle rest stops are long naps; busy states just catch a breath.
+        pauseUntil = ts + (data.state === 'idle' ? 1800 + Math.random() * 4500 : 250 + Math.random() * 800);
+      } else {
+        dir = targetX > x ? 1 : -1;
+        x += dir * step;
+      }
     }
+    setNap(data.state === 'idle' && (resting || reduced));
     x = Math.max(4, Math.min(x, w - 84));
     char.style.left = x + 'px';
     applyTransform();
     if (data.state === 'working' && Math.random() < 0.006 * steps) fx('⚙', 30);
-    if (data.state === 'idle' && Math.random() < 0.008 * steps) fx('z', 34);
+    if (data.state === 'idle' && (resting || reduced) && Math.random() < 0.01 * steps) fx('z', 34);
     if (data.state === 'waiting' && Math.random() < 0.02 * steps) fx('!', 30);
     requestAnimationFrame(loop);
   }

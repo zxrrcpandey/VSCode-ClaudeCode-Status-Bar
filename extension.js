@@ -54,6 +54,8 @@ class BuddyProvider {
     let html = '';
     try { html = fs.readFileSync(path.join(__dirname, 'buddy.html'), 'utf8'); } catch { return; }
     const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    const charRaw = vscode.workspace.getConfiguration('claudePulse').get('buddyCharacter');
+    const character = ['critter', 'robot', 'cat', 'ghost'].includes(charRaw) ? charRaw : 'critter';
     try {
       const imgUri = imgPath ? view.webview.asWebviewUri(vscode.Uri.file(imgPath)).toString() : '';
       // Function replacers: a `$` in a path would otherwise trigger
@@ -61,7 +63,8 @@ class BuddyProvider {
       view.webview.html = html
         .replace(/{{nonce}}/g, () => nonce)
         .replace(/{{csp}}/g, () => view.webview.cspSource)
-        .replace(/{{img}}/g, () => imgUri);
+        .replace(/{{img}}/g, () => imgUri)
+        .replace(/{{char}}/g, () => character);
     } catch { /* view disposed between check and assignment */ }
   }
   reload() { this.build(); if (lastBuddyData) this.post(lastBuddyData); }
@@ -377,7 +380,8 @@ function activate(context) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       // Independent check — one settings write can affect several keys at once.
-      if (e.affectsConfiguration('claudePulse.buddyImage') && buddy) buddy.reload();
+      if ((e.affectsConfiguration('claudePulse.buddyImage') ||
+           e.affectsConfiguration('claudePulse.buddyCharacter')) && buddy) buddy.reload();
       if (e.affectsConfiguration('claudePulse.alignment') || e.affectsConfiguration('claudePulse.priority')) {
         createItem();
       } else if (e.affectsConfiguration('claudePulse')) {
@@ -430,14 +434,27 @@ function activate(context) {
   );
   context.subscriptions.push(
     vscode.commands.registerCommand('claudePulse.chooseBuddy', async () => {
-      const picked = await vscode.window.showOpenDialog({
-        canSelectMany: false,
-        title: 'Choose your buddy character image',
-        filters: { Images: ['png', 'gif', 'webp', 'svg', 'jpg', 'jpeg'] },
-      });
-      if (!picked || !picked[0]) return;
-      await vscode.workspace.getConfiguration('claudePulse')
-        .update('buddyImage', picked[0].fsPath, vscode.ConfigurationTarget.Global);
+      const cfg = vscode.workspace.getConfiguration('claudePulse');
+      const choice = await vscode.window.showQuickPick([
+        { label: '🐹 Critter', description: 'round and amber, the default', id: 'critter' },
+        { label: '🤖 Robot', description: 'antenna, screen face', id: 'robot' },
+        { label: '🐱 Cat', description: 'ears, tail, judgment', id: 'cat' },
+        { label: '👻 Ghost', description: 'floats, never sleeps quietly', id: 'ghost' },
+        { label: '🖼️ My own image…', description: 'PNG / JPG / WebP / SVG / animated GIF', id: 'image' },
+      ], { placeHolder: 'Pick your buddy character' });
+      if (!choice) return;
+      if (choice.id === 'image') {
+        const picked = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          title: 'Choose your buddy character image',
+          filters: { Images: ['png', 'gif', 'webp', 'svg', 'jpg', 'jpeg'] },
+        });
+        if (!picked || !picked[0]) return;
+        await cfg.update('buddyImage', picked[0].fsPath, vscode.ConfigurationTarget.Global);
+      } else {
+        await cfg.update('buddyCharacter', choice.id, vscode.ConfigurationTarget.Global);
+        await cfg.update('buddyImage', '', vscode.ConfigurationTarget.Global);
+      }
       if (buddy) buddy.reload();
       vscode.commands.executeCommand('claudePulse.buddyView.focus');
     })
