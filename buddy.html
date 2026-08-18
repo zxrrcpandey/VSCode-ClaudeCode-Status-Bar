@@ -56,6 +56,10 @@
     border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
   }
   #bubble b { color: var(--vscode-textLink-foreground, #4daafc); }
+  #bubble .sub {
+    display: block; margin-top: 4px;
+    color: var(--vscode-descriptionForeground, #999); font-size: 11.5px;
+  }
 
   .fx {
     position: absolute; font-size: 13px; pointer-events: none;
@@ -218,11 +222,26 @@
     bubbleTimer = setTimeout(() => bubble.classList.remove('show'), ms || 4500);
   }
 
-  let wavingUntil = 0, celebrateUntil = 0;
+  const NAME = esc("{{name}}") || 'friend';
+  function cheer() {
+    return pick([
+      'You’re crushing it, <b>' + NAME + '</b>! 👉 Keep going.',
+      'Hey <b>' + NAME + '</b> — future you says thanks for today’s work. 👉',
+      'One step at a time, <b>' + NAME + '</b>. You’ve got this! 💪',
+      '<b>' + NAME + '</b>, the best debugger in this room is still you. 👉',
+      'Proud of you, <b>' + NAME + '</b> — look at this progress! ✨',
+      'Breathe. Sip water. Then ship, <b>' + NAME + '</b>. 🚀',
+      'Yes, you, <b>' + NAME + '</b> 👉 — the one building cool things.',
+    ]);
+  }
+
+  let wavingUntil = 0, celebrateUntil = 0, pointUntil = 0;
   char.addEventListener('click', () => {
     squish = 0.82;
-    wavingUntil = performance.now() + 1400;
-    say(pick(lines()));
+    const now = performance.now();
+    pointUntil = now + 2600;   // stop and point at you
+    pauseUntil = now + 2600;
+    say(cheer() + '<span class="sub">' + pick(lines()) + '</span>', 6500);
     vscode.postMessage({ type: 'poke' });
   });
 
@@ -290,7 +309,10 @@
   function setLimbs(ts) {
     const now = ts;
     let al = -walkA * 0.7, ar = walkA * 0.7;
-    if (data.state === 'waiting') {
+    if (now < pointUntil) {
+      ar = -92 + Math.sin(bobT * 3) * 4;          // arm out, pointing at you
+      al = 0;
+    } else if (data.state === 'waiting') {
       const f = Math.sin(bobT * 12) * 14;
       al = 150 + f; ar = -150 - f;               // both arms up, flailing
     } else if (now < celebrateUntil) {

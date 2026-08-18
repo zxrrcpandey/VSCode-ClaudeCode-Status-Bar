@@ -19,6 +19,23 @@ let usagePoll = null;
 let usageBusy = false;
 let buddy = null;
 let lastBuddyData = null;
+let gitName = '';
+
+// The buddy addresses the user by name: claudePulse.buddyName wins, otherwise
+// the first name from git config user.name. Sanitized — it lands in webview HTML.
+function buddyName() {
+  const cfg = vscode.workspace.getConfiguration('claudePulse').get('buddyName');
+  const raw = (typeof cfg === 'string' && cfg.trim()) ? cfg : gitName;
+  return String(raw).replace(/[^\p{L}\p{N} .'-]/gu, '').trim().split(/\s+/)[0] || '';
+}
+
+function detectGitName() {
+  cp.execFile('git', ['config', '--get', 'user.name'], { timeout: 5000 }, (err, stdout) => {
+    if (err || !stdout) return;
+    gitName = stdout.trim();
+    if (gitName && buddy) buddy.reload();
+  });
+}
 
 // The roaming character lives in a webview view (VS Code has no free-floating
 // overlay surface). It receives the same state the status bar renders.
@@ -60,11 +77,13 @@ class BuddyProvider {
       const imgUri = imgPath ? view.webview.asWebviewUri(vscode.Uri.file(imgPath)).toString() : '';
       // Function replacers: a `$` in a path would otherwise trigger
       // String.replace's special replacement patterns.
+      const name = buddyName();
       view.webview.html = html
         .replace(/{{nonce}}/g, () => nonce)
         .replace(/{{csp}}/g, () => view.webview.cspSource)
         .replace(/{{img}}/g, () => imgUri)
-        .replace(/{{char}}/g, () => character);
+        .replace(/{{char}}/g, () => character)
+        .replace(/{{name}}/g, () => name);
     } catch { /* view disposed between check and assignment */ }
   }
   reload() { this.build(); if (lastBuddyData) this.post(lastBuddyData); }
@@ -381,7 +400,8 @@ function activate(context) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       // Independent check — one settings write can affect several keys at once.
       if ((e.affectsConfiguration('claudePulse.buddyImage') ||
-           e.affectsConfiguration('claudePulse.buddyCharacter')) && buddy) buddy.reload();
+           e.affectsConfiguration('claudePulse.buddyCharacter') ||
+           e.affectsConfiguration('claudePulse.buddyName')) && buddy) buddy.reload();
       if (e.affectsConfiguration('claudePulse.alignment') || e.affectsConfiguration('claudePulse.priority')) {
         createItem();
       } else if (e.affectsConfiguration('claudePulse')) {
@@ -524,6 +544,7 @@ function activate(context) {
   pollTimer = setInterval(refresh, 2000);
   // 1s tick so the elapsed timer counts smoothly.
   tickTimer = setInterval(render, 1000);
+  detectGitName();
   // Token usage scan: once shortly after startup, then every 30s (incremental).
   setTimeout(refreshUsage, 1500);
   usagePoll = setInterval(refreshUsage, 30000);

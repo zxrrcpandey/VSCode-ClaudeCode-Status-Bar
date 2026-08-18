@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "publisher": "warroom",
   "license": "MIT",
   "repository": {
@@ -95,6 +95,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show the elapsed timer while Claude is working."
+        },
+        "claudePulse.buddyName": {
+          "type": "string",
+          "default": "",
+          "description": "Name the buddy calls you in its messages. Empty = auto-detected from git config user.name (first name)."
         },
         "claudePulse.buddyCharacter": {
           "type": "string",
