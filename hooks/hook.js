@@ -43,6 +43,11 @@ function main() {
   const s = {
     session_id: sid,
     cwd: input.cwd || prev.cwd || null,
+    // Every directory this session has reported. The shell's cwd follows `cd`,
+    // so the latest value can wander outside the project — the indicator
+    // matches a window against ALL of these, keeping the session attached to
+    // the workspace it started in.
+    cwds: Array.isArray(prev.cwds) ? prev.cwds : (prev.cwd ? [prev.cwd] : []),
     state: prev.state || 'idle',
     reason: null,
     tool: prev.tool || null,
@@ -66,6 +71,7 @@ function main() {
       s.todos = null;
       s.started_at = null;
       s.ended_at = null;
+      s.cwds = input.cwd ? [input.cwd] : [];
       break;
 
     case 'UserPromptSubmit':
@@ -146,6 +152,11 @@ function main() {
       return; // unknown event — leave state untouched
   }
 
+  if (input.cwd && !s.cwds.includes(input.cwd)) s.cwds.push(input.cwd);
+  // Cap the list but always keep the first entry — it anchors the session to
+  // the workspace it started in.
+  if (s.cwds.length > 8) s.cwds = [s.cwds[0]].concat(s.cwds.slice(-7));
+
   // Concurrent hooks can interleave (parallel tool calls): re-read and keep
   // fields a racing writer set that this event doesn't own.
   const latest = readState(file);
@@ -153,6 +164,10 @@ function main() {
     if (event !== 'UserPromptSubmit') {
       if (input.tool_name !== 'TodoWrite' && latest.todos) s.todos = latest.todos;
       if (latest.started_at) s.started_at = latest.started_at;
+    }
+    if (Array.isArray(latest.cwds)) {
+      s.cwds = Array.from(new Set(latest.cwds.concat(s.cwds)));
+      if (s.cwds.length > 8) s.cwds = [s.cwds[0]].concat(s.cwds.slice(-7));
     }
   }
 

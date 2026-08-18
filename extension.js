@@ -23,13 +23,17 @@ function fmt(ms) {
 // workspace folders (or a workspace folder is inside the session's cwd,
 // for windows opened on a subfolder of the repo Claude runs in).
 function sessionMatchesWorkspace(s) {
-  if (!s.cwd) return false;
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) return false;
-  const cwd = path.resolve(s.cwd);
-  return folders.some((f) => {
-    const wf = path.resolve(f.uri.fsPath);
-    return cwd === wf || cwd.startsWith(wf + path.sep) || wf.startsWith(cwd + path.sep);
+  // The latest cwd follows the session's shell (`cd` moves it), so match
+  // against every directory the session has ever reported.
+  const cwds = Array.isArray(s.cwds) && s.cwds.length ? s.cwds : (s.cwd ? [s.cwd] : []);
+  return cwds.some((c) => {
+    const cwd = path.resolve(c);
+    return folders.some((f) => {
+      const wf = path.resolve(f.uri.fsPath);
+      return cwd === wf || cwd.startsWith(wf + path.sep) || wf.startsWith(cwd + path.sep);
+    });
   });
 }
 
@@ -116,7 +120,13 @@ function render() {
   const now = Date.now();
 
   if (sessions.length === 0) {
-    item.hide();
+    // Stay visible so the indicator never seems to vanish — a dim idle mark
+    // simply means no Claude session belongs to this window right now.
+    item.backgroundColor = undefined;
+    item.color = undefined;
+    item.text = '$(sparkle) Claude';
+    item.tooltip = 'No Claude Code session in this workspace yet — start one and it will appear here.';
+    item.show();
     return;
   }
 

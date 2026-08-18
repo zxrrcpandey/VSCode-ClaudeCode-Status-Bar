@@ -53,9 +53,11 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
 
 ## Troubleshooting
 
-- **Nothing shows up** — the item hides when there are no live sessions. Start a Claude Code
-  session and send a prompt. Also check `ls ~/.claude/claude-pulse/state/` for `*.json` files;
-  if none appear, hooks aren't firing (run `/hooks` inside Claude Code to verify they loaded).
+- **Shows idle "✳ Claude" but a session is running** — check
+  `ls ~/.claude/claude-pulse/state/` for `*.json` files; if none appear, hooks aren't firing
+  (run `/hooks` inside Claude Code to verify they loaded). Sessions are matched to a window
+  by every directory they have reported, so a session whose shell `cd`s elsewhere stays
+  attached to the workspace it started in.
 - **"Needs input" never shows (extension panel)** — there are open Claude Code bugs where the
   `Notification` hook doesn't fire in the VS Code panel. Claude Pulse also listens to
   `PermissionRequest` as a fallback, which covers permission prompts.
