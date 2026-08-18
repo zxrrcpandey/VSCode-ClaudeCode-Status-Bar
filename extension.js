@@ -17,6 +17,79 @@ let tickTimer = null;
 let usageData = null;
 let usagePoll = null;
 let usageBusy = false;
+let buddy = null;
+let lastBuddyData = null;
+
+// The roaming character lives in a webview view (VS Code has no free-floating
+// overlay surface). It receives the same state the status bar renders.
+class BuddyProvider {
+  resolveWebviewView(view) {
+    this.view = view;
+    this.build();
+    view.webview.onDidReceiveMessage((m) => {
+      if (m && m.type === 'hello' && lastBuddyData) this.post(lastBuddyData);
+    });
+    view.onDidChangeVisibility(() => {
+      if (view.visible && lastBuddyData) this.post(lastBuddyData);
+    });
+    // Hiding the view via the context menu DISPOSES it (a fresh one arrives
+    // through resolveWebviewView when re-enabled) — drop our reference so
+    // build()/reload() never touch a disposed webview, which throws.
+    view.onDidDispose(() => {
+      if (this.view === view) this.view = null;
+    });
+  }
+  build() {
+    const view = this.view;
+    if (!view) return;
+    // The user's own character image (any PNG/GIF/WebP/SVG); falls back to
+    // the built-in critter when unset or missing.
+    let imgPath = vscode.workspace.getConfiguration('claudePulse').get('buddyImage');
+    if (typeof imgPath !== 'string' || !imgPath.trim()) imgPath = null;
+    if (imgPath && !fs.existsSync(imgPath)) imgPath = null;
+    view.webview.options = {
+      enableScripts: true,
+      localResourceRoots: imgPath ? [vscode.Uri.file(path.dirname(imgPath))] : [],
+    };
+    let html = '';
+    try { html = fs.readFileSync(path.join(__dirname, 'buddy.html'), 'utf8'); } catch { return; }
+    const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    try {
+      const imgUri = imgPath ? view.webview.asWebviewUri(vscode.Uri.file(imgPath)).toString() : '';
+      // Function replacers: a `$` in a path would otherwise trigger
+      // String.replace's special replacement patterns.
+      view.webview.html = html
+        .replace(/{{nonce}}/g, () => nonce)
+        .replace(/{{csp}}/g, () => view.webview.cspSource)
+        .replace(/{{img}}/g, () => imgUri);
+    } catch { /* view disposed between check and assignment */ }
+  }
+  reload() { this.build(); if (lastBuddyData) this.post(lastBuddyData); }
+  post(data) {
+    if (this.view && this.view.visible) {
+      try { this.view.webview.postMessage(data); } catch { /* view disposed */ }
+    }
+  }
+}
+
+function postBuddy(s, st, now) {
+  const sessTok = usageData && s.session_id && usageData.bySession[s.session_id]
+    ? usageRows(usageData.bySession[s.session_id]).reduce((a, r) => a + r.out, 0) : 0;
+  const todayTok = usageData
+    ? usageRows(sumDays(usageData.byDay, 1)).reduce((a, r) => a + r.out, 0) : 0;
+  lastBuddyData = {
+    state: st,
+    reason: s.reason || null,
+    project: s.cwd ? path.basename(s.cwd) : null,
+    tool: s.tool || null,
+    todos: s.todos || null,
+    elapsedMs: s.started_at ? now - s.started_at : 0,
+    totalMs: s.started_at && s.ended_at ? s.ended_at - s.started_at : 0,
+    tokensSession: sessTok,
+    tokensToday: todayTok,
+  };
+  if (buddy) buddy.post(lastBuddyData);
+}
 
 // Token usage comes from Claude Code's own transcript files — exact and
 // local. The scan runs in a child process so it can never block the UI.
@@ -183,6 +256,7 @@ function render() {
     item.text = '$(sparkle) Claude';
     item.tooltip = 'No Claude Code session in this workspace yet — start one and it will appear here.';
     item.show();
+    postBuddy({}, 'idle', now);
     return;
   }
 
@@ -272,6 +346,7 @@ function render() {
   tip.appendMarkdown('\n\n_Click for sessions & full usage report_');
   item.tooltip = tip;
   item.show();
+  postBuddy(s, st, now);
 }
 
 function refresh() {
@@ -301,6 +376,8 @@ function activate(context) {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
+      // Independent check — one settings write can affect several keys at once.
+      if (e.affectsConfiguration('claudePulse.buddyImage') && buddy) buddy.reload();
       if (e.affectsConfiguration('claudePulse.alignment') || e.affectsConfiguration('claudePulse.priority')) {
         createItem();
       } else if (e.affectsConfiguration('claudePulse')) {
@@ -338,6 +415,31 @@ function activate(context) {
           await vscode.commands.executeCommand('workbench.action.terminal.focus');
         } catch { /* no terminal open — nothing to focus */ }
       }
+    })
+  );
+
+  buddy = new BuddyProvider();
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('claudePulse.buddyView', buddy, {
+      webviewOptions: { retainContextWhenHidden: true },
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudePulse.openBuddy', () =>
+      vscode.commands.executeCommand('claudePulse.buddyView.focus'))
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudePulse.chooseBuddy', async () => {
+      const picked = await vscode.window.showOpenDialog({
+        canSelectMany: false,
+        title: 'Choose your buddy character image',
+        filters: { Images: ['png', 'gif', 'webp', 'svg', 'jpg', 'jpeg'] },
+      });
+      if (!picked || !picked[0]) return;
+      await vscode.workspace.getConfiguration('claudePulse')
+        .update('buddyImage', picked[0].fsPath, vscode.ConfigurationTarget.Global);
+      if (buddy) buddy.reload();
+      vscode.commands.executeCommand('claudePulse.buddyView.focus');
     })
   );
 

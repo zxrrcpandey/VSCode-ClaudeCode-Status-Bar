@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src {{csp}} data:; script-src 'nonce-{{nonce}}';">
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; background: transparent; }
+  #stage {
+    position: relative; width: 100%; height: 100%;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    user-select: none;
+  }
+  #floor {
+    position: absolute; left: 0; right: 0; bottom: 10px; height: 1px;
+    background: var(--vscode-editorWidget-border, rgba(128,128,128,.35));
+  }
+  #char {
+    position: absolute; bottom: 11px; width: 78px; height: 78px;
+    cursor: pointer; transform-origin: 50% 100%;
+    transition: filter .2s;
+  }
+  #char:hover { filter: brightness(1.1); }
+  #char svg { width: 100%; height: 100%; display: block; }
+  #charimg {
+    display: none; width: 100%; height: 100%;
+    object-fit: contain; object-position: bottom;
+    image-rendering: auto; pointer-events: none;
+  }
+  .ear { fill: #d99347; }
+  .earin { fill: #b8763a; }
+  #body { fill: #f2b366; }
+  .foot { fill: #d99347; }
+  .cheek { fill: rgba(226, 120, 100, .45); }
+  .eye { fill: #ffffff; }
+  .pupil { fill: #3a2c18; }
+  #mouth { stroke: #3a2c18; stroke-width: 2.4; fill: none; stroke-linecap: round; }
+  .xeye { stroke: #3a2c18; stroke-width: 2.6; stroke-linecap: round; display: none; }
+  .lid { stroke: #3a2c18; stroke-width: 2.6; stroke-linecap: round; display: none; }
+
+  #bubble {
+    position: absolute; max-width: 320px;
+    background: var(--vscode-editorWidget-background, #252526);
+    color: var(--vscode-editorWidget-foreground, #ccc);
+    border: 1px solid var(--vscode-editorWidget-border, #454545);
+    border-radius: 10px; padding: 9px 12px;
+    font-size: 12.5px; line-height: 1.45;
+    opacity: 0; transition: opacity .18s; pointer-events: none;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+  }
+  #bubble.show { opacity: 1; }
+  #bubble::after {
+    content: ""; position: absolute; bottom: -6px; left: 26px;
+    width: 10px; height: 10px; transform: rotate(45deg);
+    background: inherit;
+    border-right: 1px solid var(--vscode-editorWidget-border, #454545);
+    border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
+  }
+  #bubble b { color: var(--vscode-textLink-foreground, #4daafc); }
+
+  .fx {
+    position: absolute; font-size: 13px; pointer-events: none;
+    animation: floatup 1.6s ease-out forwards;
+  }
+  @keyframes floatup {
+    from { opacity: .95; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(-34px); }
+  }
+  #hint {
+    position: absolute; right: 10px; bottom: 16px;
+    font-size: 11px; color: var(--vscode-descriptionForeground, #888);
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: reduce) { .fx { animation-duration: .01s; } }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="floor"></div>
+  <div id="char" title="Click me!">
+    <img id="charimg" alt="buddy">
+    <svg id="charsvg" viewBox="-60 -60 120 120">
+      <g id="figure">
+        <ellipse class="foot" cx="-13" cy="31" rx="9" ry="5"/>
+        <ellipse class="foot" cx="13" cy="31" rx="9" ry="5"/>
+        <circle class="ear" cx="-17" cy="-25" r="10"/>
+        <circle class="ear" cx="17" cy="-25" r="10"/>
+        <circle class="earin" cx="-17" cy="-25" r="4.5"/>
+        <circle class="earin" cx="17" cy="-25" r="4.5"/>
+        <ellipse id="body" cx="0" cy="3" rx="30" ry="28"/>
+        <g id="face">
+          <circle class="cheek" cx="-17" cy="6" r="5"/>
+          <circle class="cheek" cx="17" cy="6" r="5"/>
+          <circle class="eye" cx="-10" cy="-5" r="6.5"/>
+          <circle class="eye" cx="10" cy="-5" r="6.5"/>
+          <circle class="pupil" id="pl" cx="-9" cy="-5" r="3"/>
+          <circle class="pupil" id="pr" cx="11" cy="-5" r="3"/>
+          <line class="lid" id="lidl" x1="-15" y1="-5" x2="-5" y2="-5"/>
+          <line class="lid" id="lidr" x1="5" y1="-5" x2="15" y2="-5"/>
+          <g class="xeye" id="xl"><line x1="-14" y1="-9" x2="-6" y2="-1"/><line x1="-6" y1="-9" x2="-14" y2="-1"/></g>
+          <g class="xeye" id="xr"><line x1="6" y1="-9" x2="14" y2="-1"/><line x1="14" y1="-9" x2="6" y2="-1"/></g>
+          <path id="mouth" d="M -7 9 Q 0 14 7 9"/>
+        </g>
+      </g>
+    </svg>
+  </div>
+  <div id="bubble"></div>
+  <span id="hint">click your buddy — it talks · set your own image via “Claude Pulse: Choose Buddy Character”</span>
+</div>
+
+<script nonce="{{nonce}}">
+  const vscode = acquireVsCodeApi();
+  const char = document.getElementById('char');
+  const charimg = document.getElementById('charimg');
+  const charsvg = document.getElementById('charsvg');
+  const bubble = document.getElementById('bubble');
+  const stage = document.getElementById('stage');
+  const mouth = document.getElementById('mouth');
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const IMG = "{{img}}";
+  let imgMode = IMG.length > 0;
+  if (imgMode) {
+    charimg.onerror = () => {
+      // Image gone or unreadable — fall back to the built-in critter
+      // instead of an invisible buddy.
+      imgMode = false;
+      charimg.style.display = 'none';
+      charsvg.style.display = '';
+      setFace(data.state);
+    };
+    charimg.src = IMG;
+    charimg.style.display = 'block';
+    charsvg.style.display = 'none';
+  }
+
+  let data = { state: 'idle' };
+  let x = 60, targetX = 200, bubbleTimer = null, lastFx = 0;
+
+  const fmt = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  };
+  const tok = (n) => !n ? '0' : n < 1000 ? String(n) : n < 1e6 ? (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + 'k' : (n / 1e6).toFixed(2) + 'M';
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  // Session-derived text (todos, tool, project) goes through innerHTML —
+  // escape it so a todo like "fix a<b comparison" can't swallow the bubble.
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function lines() {
+    const d = data;
+    if (d.state === 'waiting') {
+      return d.reason === 'question'
+        ? ['Claude has a <b>question</b> for you — over in the panel!', 'Your opinion is required. I would answer, but I am busy being adorable.']
+        : ['<b>Claude needs your permission!</b> Go press the button.', 'Ding ding! A permission prompt is waiting on you.'];
+    }
+    if (d.state === 'working') {
+      const base = d.todos && d.todos.total
+        ? ['<b>' + d.todos.done + '/' + d.todos.total + '</b> steps done — ' + esc(d.todos.active || 'on it') + '.', 'Progress report: <b>' + d.todos.done + '/' + d.todos.total + '</b>. I supervised every one.']
+        : ['Claude is on it — <b>' + fmt(d.elapsedMs || 0) + '</b> in.' + (d.tool ? ' Currently: <b>' + esc(d.tool) + '</b>.' : ''), 'Hard at work for <b>' + fmt(d.elapsedMs || 0) + '</b>. I am also working (pacing).'];
+      if (d.tokensSession) base.push('This session: <b>' + tok(d.tokensSession) + '</b> tokens out so far.');
+      return base;
+    }
+    if (d.state === 'done') {
+      return ['Done' + (d.totalMs ? ' in <b>' + fmt(d.totalMs) + '</b>' : '') + '! We are basically unstoppable.', 'Finished! Time for a victory lap.'];
+    }
+    if (d.state === 'error') {
+      return ['Ouch — the response <b>dropped</b>. Check the Claude panel?', 'Connection lost mid-thought. Happens to the best of us.'];
+    }
+    const idle = ['All quiet' + (d.project ? ' in <b>' + esc(d.project) + '</b>' : '') + '. Send Claude a prompt and I will start pacing!', 'Zzz… oh! Hi. Nothing running right now.'];
+    if (d.tokensToday) idle.push('Today so far: <b>' + tok(d.tokensToday) + '</b> tokens out. Busy day!');
+    return idle;
+  }
+
+  function say(html, ms) {
+    bubble.innerHTML = html;
+    const bw = Math.max(80, Math.min(320, stage.clientWidth - 20));
+    bubble.style.maxWidth = bw + 'px';
+    const left = Math.max(6, Math.min(x - 20, stage.clientWidth - bubble.offsetWidth - 8));
+    bubble.style.left = left + 'px';
+    // Clamp into view — short panels would otherwise clip the bubble away.
+    bubble.style.bottom = Math.max(4, Math.min(98, stage.clientHeight - bubble.offsetHeight - 4)) + 'px';
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(() => bubble.classList.remove('show'), ms || 4500);
+  }
+
+  char.addEventListener('click', () => {
+    squish = 0.82;
+    say(pick(lines()));
+    vscode.postMessage({ type: 'poke' });
+  });
+
+  function fx(txt, dx) {
+    const now = Date.now();
+    if (now - lastFx < 900) return;
+    lastFx = now;
+    const el = document.createElement('span');
+    el.className = 'fx';
+    el.textContent = txt;
+    el.style.left = (x + 22 + (dx || 0)) + 'px';
+    el.style.bottom = '88px';
+    stage.appendChild(el);
+    setTimeout(() => el.remove(), 1700);
+  }
+
+  function setFace(state) {
+    if (imgMode) return;
+    const show = (id, on) => document.getElementById(id).style.display = on ? '' : 'none';
+    const sleeping = state === 'idle';
+    const dead = state === 'error';
+    show('lidl', sleeping); show('lidr', sleeping);
+    show('xl', dead); show('xr', dead);
+    document.getElementById('pl').style.display = (sleeping || dead) ? 'none' : '';
+    document.getElementById('pr').style.display = (sleeping || dead) ? 'none' : '';
+    mouth.setAttribute('d',
+      state === 'done' ? 'M -8 7 Q 0 16 8 7' :
+      state === 'error' ? 'M -7 12 Q 0 7 7 12' :
+      state === 'waiting' ? 'M -4 9 Q 0 13 4 9' : 'M -7 9 Q 0 14 7 9');
+  }
+
+  let bobT = 0, dir = 1, moving = false, squish = 1;
+  function applyTransform() {
+    const hop = data.state === 'waiting' ? Math.abs(Math.sin(bobT * 6)) * -14 : Math.sin(bobT * 2.2) * -2.5;
+    const waddle = moving && !reduced ? Math.sin(bobT * 9) * 6 : 0;
+    squish += (1 - squish) * 0.18;
+    char.style.transform =
+      'translateY(' + hop.toFixed(1) + 'px) rotate(' + waddle.toFixed(1) + 'deg)' +
+      ' scaleX(' + (dir * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
+  }
+
+  let lastTs = 0;
+  function loop(ts) {
+    bobT = ts / 1000;
+    // Scale by real elapsed time so speed is identical on 60Hz and 120Hz.
+    const dt = lastTs ? Math.min(100, ts - lastTs) : 16.7;
+    lastTs = ts;
+    const steps = dt / 16.7;
+    const w = Math.max(120, stage.clientWidth);
+    const speed = data.state === 'working' ? 1.6 : data.state === 'done' ? 1.0 : data.state === 'idle' ? 0 : 0.45;
+    moving = !reduced && speed > 0;
+    if (moving) {
+      if (Math.abs(targetX - x) < 8) targetX = 20 + Math.random() * (w - 116);
+      dir = targetX > x ? 1 : -1;
+      x += dir * speed * steps;
+    }
+    x = Math.max(4, Math.min(x, w - 84));
+    char.style.left = x + 'px';
+    applyTransform();
+    if (data.state === 'working' && Math.random() < 0.006 * steps) fx('⚙', 30);
+    if (data.state === 'idle' && Math.random() < 0.008 * steps) fx('z', 34);
+    if (data.state === 'waiting' && Math.random() < 0.02 * steps) fx('!', 30);
+    requestAnimationFrame(loop);
+  }
+
+  let gotFirst = false;
+  window.addEventListener('message', (e) => {
+    const prev = data.state;
+    data = (e.data && e.data.state) ? e.data : data;
+    if (data.state !== prev) {
+      setFace(data.state);
+      // The first message after (re)load is a baseline, not a transition —
+      // don't replay bubbles/confetti every time the view reopens.
+      if (gotFirst) {
+        if (data.state === 'waiting') say(pick(lines()), 7000);
+        if (data.state === 'done') { say(pick(lines()), 3500); for (let i = 0; i < 5; i++) setTimeout(() => { lastFx = 0; fx(pick(['🎉','✨','⭐']), i * 14 - 28); }, i * 120); }
+        if (data.state === 'error') say(pick(lines()), 6000);
+      }
+    }
+    gotFirst = true;
+  });
+
+  setFace('idle');
+  vscode.postMessage({ type: 'hello' });
+  requestAnimationFrame(loop);
+</script>
+</body>
+</html>

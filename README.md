@@ -30,6 +30,18 @@ transcript files (`~/.claude/projects/**/*.jsonl`) — still no API calls:
 - Plan limit *remaining* (the 5-hour / weekly percentages) is not stored on disk by Claude
   Code — run `/usage` inside Claude Code for that.
 
+## Buddy — a character that reacts to Claude
+
+**View → Open View… → "Buddy"** (or run *Claude Pulse: Open Buddy*) adds a panel tab with a
+little character that mirrors Claude's state: paces while Claude works, hops and rings when
+Claude needs you, sleeps when idle, celebrates on done, goes dizzy on errors. **Click it and
+it talks back** — real status, task progress, and token counts in speech bubbles.
+
+**Use your own character:** run *Claude Pulse: Choose Buddy Character* and pick any image —
+PNG, JPG, WebP, SVG, or an animated GIF (`claudePulse.buddyImage` holds the path). The
+built-in critter is the fallback. VS Code has no floating-overlay surface, so the character
+lives in its own panel (the same approach vscode-pets uses) — it cannot walk over the editor.
+
 ## How it works
 
 1. Hook entries in `~/.claude/settings.json` run `~/.claude/claude-pulse/hook.js` on Claude Code

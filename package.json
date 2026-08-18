@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "warroom",
   "license": "MIT",
   "repository": {
@@ -20,7 +20,33 @@
   ],
   "main": "./extension.js",
   "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "claudePulseBuddy",
+          "title": "Claude Buddy",
+          "icon": "media/buddy.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudePulseBuddy": [
+        {
+          "type": "webview",
+          "id": "claudePulse.buddyView",
+          "name": "Buddy"
+        }
+      ]
+    },
     "commands": [
+      {
+        "command": "claudePulse.openBuddy",
+        "title": "Claude Pulse: Open Buddy"
+      },
+      {
+        "command": "claudePulse.chooseBuddy",
+        "title": "Claude Pulse: Choose Buddy Character"
+      },
       {
         "command": "claudePulse.showSessions",
         "title": "Claude Pulse: Show Claude Sessions"
@@ -69,6 +95,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show the elapsed timer while Claude is working."
+        },
+        "claudePulse.buddyImage": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to your own character image for the Buddy panel (PNG, GIF, WebP, SVG — animated GIFs work). Empty = built-in critter. Easiest via the 'Claude Pulse: Choose Buddy Character' command."
         },
         "claudePulse.showTokens": {
           "type": "boolean",
