@@ -186,11 +186,35 @@ function refresh() {
   render();
 }
 
-function activate(context) {
-  item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+// When the window is narrow, VS Code culls status bar items from the middle
+// of the bar first — the far edges survive. Default to the far-right edge
+// (very low priority) so the indicator stays visible in narrow windows.
+function createItem() {
+  if (item) item.dispose();
+  const cfg = vscode.workspace.getConfiguration('claudePulse');
+  const align = cfg.get('alignment') === 'left'
+    ? vscode.StatusBarAlignment.Left
+    : vscode.StatusBarAlignment.Right;
+  const prRaw = cfg.get('priority');
+  item = vscode.window.createStatusBarItem(align, typeof prRaw === 'number' ? prRaw : -900);
   item.name = 'Claude Pulse';
   item.command = 'claudePulse.showSessions';
-  context.subscriptions.push(item);
+  render();
+}
+
+function activate(context) {
+  createItem();
+  context.subscriptions.push({ dispose: () => { if (item) item.dispose(); } });
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('claudePulse.alignment') || e.affectsConfiguration('claudePulse.priority')) {
+        createItem();
+      } else if (e.affectsConfiguration('claudePulse')) {
+        refresh();
+      }
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('claudePulse.showSessions', async () => {

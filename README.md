@@ -65,6 +65,10 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   `claudePulse.waitingTimeoutSeconds` (default 25 s) means you already approved. If you often
   leave permission dialogs open for a long time, raise the setting, or set it to 0 to always
   keep the yellow state until an event clears it.
+- **Indicator disappears in narrow windows** — VS Code hides status bar items from the
+  middle of the bar when space runs out; the far edges survive. Claude Pulse therefore sits
+  at the far-right edge by default (`claudePulse.priority: -900`). If another extension
+  crowds it out, lower the priority further, or move it with `claudePulse.alignment`.
 - **Stale ghost sessions** — busy sessions with no events for a long time are dropped
   automatically (60 min working; anything untouched for 4 h is deleted). To force-clear a
   stuck indicator, run **Claude Pulse: Reset Session States** from the command palette (or
@@ -74,6 +78,8 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
 
 - `claudePulse.allProjects` — show sessions from every project in every window (default off:
   each window shows only its own workspace's sessions)
+- `claudePulse.alignment` / `claudePulse.priority` — where the indicator sits (default:
+  right side, far edge, so narrow windows don't hide it)
 - `claudePulse.doneDisplaySeconds` — how long the ✓ stays before fading to idle (default 15)
 - `claudePulse.showElapsed` — show the live timer while working (default on)
 - `claudePulse.waitingTimeoutSeconds` — un-refreshed "needs input" older than this shows as

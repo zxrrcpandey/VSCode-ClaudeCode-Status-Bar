@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "warroom",
   "license": "MIT",
   "repository": {
@@ -33,6 +33,17 @@
     "configuration": {
       "title": "Claude Pulse",
       "properties": {
+        "claudePulse.alignment": {
+          "type": "string",
+          "enum": ["right", "left"],
+          "default": "right",
+          "description": "Which side of the status bar the indicator sits on."
+        },
+        "claudePulse.priority": {
+          "type": "number",
+          "default": -900,
+          "description": "Position within the chosen side (higher = further left). The default -900 keeps it at the far-right edge, which VS Code preserves when the window is too narrow to show every item."
+        },
         "claudePulse.allProjects": {
           "type": "boolean",
           "default": false,
