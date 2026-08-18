@@ -2,6 +2,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const cp = require('child_process');
 
 const STATE_DIR = path.join(os.homedir(), '.claude', 'claude-pulse', 'state');
 
@@ -13,6 +14,60 @@ let item = null;
 let sessions = [];
 let pollTimer = null;
 let tickTimer = null;
+let usageData = null;
+let usagePoll = null;
+let usageBusy = false;
+
+// Token usage comes from Claude Code's own transcript files — exact and
+// local. The scan runs in a child process so it can never block the UI.
+function refreshUsage() {
+  if (usageBusy) return;
+  usageBusy = true;
+  cp.execFile(process.execPath, [path.join(__dirname, 'usage-scan.js')], {
+    env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }),
+    maxBuffer: 16 * 1024 * 1024,
+    timeout: 30000,
+  }, (err, stdout) => {
+    usageBusy = false;
+    if (err || !stdout) return;
+    try { usageData = JSON.parse(stdout); render(); } catch { /* keep last data */ }
+  });
+}
+
+function fmtTok(n) {
+  if (!n) return '0';
+  if (n < 1000) return String(n);
+  if (n < 1e6) return (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + 'k';
+  return (n / 1e6).toFixed(2) + 'M';
+}
+
+function shortModel(m) {
+  return m.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+}
+
+function usageRows(agg) {
+  return Object.keys(agg || {})
+    .map((m) => Object.assign({ model: m }, agg[m]))
+    .filter((r) => r.model !== '<synthetic>' && (r.out || r.inp || r.cw))
+    .sort((a, b) => b.out - a.out);
+}
+
+function sumDays(byDay, days) {
+  const out = {};
+  const now = new Date();
+  for (let i = 0; i < days; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const key = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+    const day = byDay && byDay[key];
+    if (!day) continue;
+    for (const m of Object.keys(day)) {
+      const t = out[m] || (out[m] = { out: 0, inp: 0, cw: 0, cr: 0 });
+      t.out += day[m].out; t.inp += day[m].inp; t.cw += day[m].cw; t.cr += day[m].cr;
+    }
+  }
+  return out;
+}
 
 function fmt(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -78,6 +133,7 @@ function getTimings() {
     // <= 0 disables the downgrade (waiting shows until an event clears it)
     waitTimeoutMs: typeof waitRaw === 'number' && waitRaw > 0 ? waitRaw * 1000 : Infinity,
     showElapsed: cfg.get('showElapsed') !== false,
+    showTokens: cfg.get('showTokens') !== false,
   };
 }
 
@@ -155,6 +211,10 @@ function render() {
     } else {
       item.text = spin + 'Claude · working' + suffix;
     }
+    if (t.showTokens && usageData && s.session_id && usageData.bySession[s.session_id]) {
+      const tot = usageRows(usageData.bySession[s.session_id]).reduce((a, r) => a + r.out, 0);
+      if (tot) item.text += ' · ' + fmtTok(tot);
+    }
   } else if (st === 'error') {
     item.text = '$(warning) Claude · error' + suffix;
     item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
@@ -186,7 +246,30 @@ function render() {
     }
     tip.appendMarkdown(line + '\n');
   }
-  tip.appendMarkdown('\n_Click to view sessions / focus terminal_');
+  if (usageData) {
+    tip.appendMarkdown('\n---\n');
+    const su = s.session_id && usageData.bySession[s.session_id];
+    if (su) {
+      tip.appendMarkdown('**Tokens · this session**\n');
+      for (const r of usageRows(su)) {
+        tip.appendMarkdown('- `' + shortModel(r.model) + '` — ' + fmtTok(r.out) + ' out · ' +
+          fmtTok(r.inp + r.cw) + ' in · ' + fmtTok(r.cr) + ' cache-read\n');
+      }
+    }
+    const today = usageRows(sumDays(usageData.byDay, 1));
+    if (today.length) {
+      tip.appendMarkdown('\n**Today** — ' +
+        today.map((r) => shortModel(r.model) + ' ' + fmtTok(r.out)).join(' · ') + ' out\n');
+    }
+    const week = usageRows(sumDays(usageData.byDay, 7));
+    if (week.length) {
+      const weekOut = week.reduce((a, r) => a + r.out, 0);
+      tip.appendMarkdown('**Last 7 days** — ' + fmtTok(weekOut) + ' out (' +
+        week.map((r) => shortModel(r.model)).join(', ') + ')\n');
+    }
+    tip.appendMarkdown('\n_Plan limit remaining (5 h / weekly) is not stored locally — run `/usage` inside Claude Code._');
+  }
+  tip.appendMarkdown('\n\n_Click for sessions & full usage report_');
   item.tooltip = tip;
   item.show();
 }
@@ -243,15 +326,53 @@ function activate(context) {
           detail: x.cwd || undefined,
         };
       });
+      picks.push({ label: '$(graph) Token usage report', description: 'session · today · last 7 days, by model', usage: true });
       picks.push({ label: '$(trash) Reset all session states', description: 'clear stuck indicators', reset: true });
       const chosen = await vscode.window.showQuickPick(picks, { placeHolder: 'Claude Code sessions' });
-      if (chosen && chosen.reset) {
+      if (chosen && chosen.usage) {
+        await vscode.commands.executeCommand('claudePulse.usage');
+      } else if (chosen && chosen.reset) {
         await vscode.commands.executeCommand('claudePulse.resetSessions');
       } else if (chosen) {
         try {
           await vscode.commands.executeCommand('workbench.action.terminal.focus');
         } catch { /* no terminal open — nothing to focus */ }
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudePulse.usage', async () => {
+      if (!usageData) {
+        refreshUsage();
+        vscode.window.showInformationMessage('Claude Pulse: scanning transcripts — try again in a few seconds.');
+        return;
+      }
+      const items = [];
+      const sep = (label) => ({ label, kind: vscode.QuickPickItemKind.Separator });
+      const rowsFor = (agg) => usageRows(agg).map((r) => ({
+        label: r.model,
+        description: fmtTok(r.out) + ' out · ' + fmtTok(r.inp + r.cw) + ' in · ' + fmtTok(r.cr) + ' cache-read',
+      }));
+      for (const x of sessions) {
+        const su = usageData.bySession[x.session_id];
+        if (!su) continue;
+        items.push(sep('Session · ' + (x.cwd ? path.basename(x.cwd) : (x.session_id || '?').slice(0, 8))));
+        items.push(...rowsFor(su));
+      }
+      items.push(sep('Today (all projects)'));
+      items.push(...rowsFor(sumDays(usageData.byDay, 1)));
+      items.push(sep('Last 7 days (all projects)'));
+      items.push(...rowsFor(sumDays(usageData.byDay, 7)));
+      items.push(sep('Plan limits'));
+      items.push({
+        label: '$(info) 5-hour / weekly remaining',
+        description: 'not stored locally — run /usage inside Claude Code',
+      });
+      await vscode.window.showQuickPick(items, {
+        placeHolder: 'Claude token usage — exact, from local transcripts (no API calls)',
+        matchOnDescription: true,
+      });
     })
   );
 
@@ -284,6 +405,9 @@ function activate(context) {
   pollTimer = setInterval(refresh, 2000);
   // 1s tick so the elapsed timer counts smoothly.
   tickTimer = setInterval(render, 1000);
+  // Token usage scan: once shortly after startup, then every 30s (incremental).
+  setTimeout(refreshUsage, 1500);
+  usagePoll = setInterval(refreshUsage, 30000);
 
   refresh();
 }
@@ -291,6 +415,7 @@ function activate(context) {
 function deactivate() {
   if (pollTimer) clearInterval(pollTimer);
   if (tickTimer) clearInterval(tickTimer);
+  if (usagePoll) clearInterval(usagePoll);
 }
 
 module.exports = { activate, deactivate };

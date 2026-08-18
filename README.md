@@ -14,6 +14,22 @@ A tiny VS Code status bar indicator that always tells you what Claude Code is do
 **100% local, zero cost.** The hooks run a small local Node script; the extension watches a
 state file. No API calls, no tokens, no network.
 
+## Token usage
+
+Pulse also reports **exact token usage by model**, computed locally from Claude Code's own
+transcript files (`~/.claude/projects/**/*.jsonl`) — still no API calls:
+
+- The status bar appends the session's output tokens while Claude works (`· 84k`;
+  disable via `claudePulse.showTokens`).
+- Hover the item for a breakdown: this session, today, and the last 7 days, per model
+  (input, output, cache).
+- **Claude Pulse: Token Usage Report** (command palette, or click the item) opens the full
+  report across all projects.
+- The scan runs in a background process every 30 s with an incremental byte-offset cache,
+  so it reads only newly appended transcript lines. Repeated message ids are deduplicated.
+- Plan limit *remaining* (the 5-hour / weekly percentages) is not stored on disk by Claude
+  Code — run `/usage` inside Claude Code for that.
+
 ## How it works
 
 1. Hook entries in `~/.claude/settings.json` run `~/.claude/claude-pulse/hook.js` on Claude Code

@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "publisher": "warroom",
   "license": "MIT",
   "repository": {
@@ -28,6 +28,10 @@
       {
         "command": "claudePulse.resetSessions",
         "title": "Claude Pulse: Reset Session States"
+      },
+      {
+        "command": "claudePulse.usage",
+        "title": "Claude Pulse: Token Usage Report"
       }
     ],
     "configuration": {
@@ -65,6 +69,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show the elapsed timer while Claude is working."
+        },
+        "claudePulse.showTokens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Append the session's output-token count to the status bar while Claude works."
         }
       }
     }
