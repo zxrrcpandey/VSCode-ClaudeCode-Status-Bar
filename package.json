@@ -1,0 +1,61 @@
+{
+  "name": "claude-pulse",
+  "displayName": "Claude Pulse",
+  "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
+  "version": "0.1.2",
+  "publisher": "warroom",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar.git"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "claudePulse.showSessions",
+        "title": "Claude Pulse: Show Claude Sessions"
+      },
+      {
+        "command": "claudePulse.resetSessions",
+        "title": "Claude Pulse: Reset Session States"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Pulse",
+      "properties": {
+        "claudePulse.allProjects": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show Claude sessions from every project. Off (default): each window only shows sessions running in its own workspace folders."
+        },
+        "claudePulse.doneDisplaySeconds": {
+          "type": "number",
+          "default": 15,
+          "minimum": 0,
+          "description": "How long the done checkmark stays visible before fading back to idle."
+        },
+        "claudePulse.waitingTimeoutSeconds": {
+          "type": "number",
+          "default": 25,
+          "minimum": 0,
+          "description": "Claude Code fires no event when you APPROVE a permission, so 'needs input' older than this is shown as working again. 0 disables the timeout."
+        },
+        "claudePulse.showElapsed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the elapsed timer while Claude is working."
+        }
+      }
+    }
+  }
+}
