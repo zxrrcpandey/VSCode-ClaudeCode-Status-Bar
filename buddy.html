@@ -283,16 +283,34 @@
   }
 
   let bobT = 0, dir = 1, moving = false, squish = 1;
-  function applyTransform() {
-    const hop = data.state === 'waiting' ? Math.abs(Math.sin(bobT * 6)) * -14 : Math.sin(bobT * 2.2) * -2.5;
-    const waddle = moving && !reduced ? Math.sin(bobT * 9) * 6 : 0;
+  let y = 0, vy = 0;
+  let flip = { active: false, start: 0, dur: 0, turns: 1 };
+  const GHOST = CHARACTER === 'ghost' && !imgMode;
+
+  function applyTransform(ts) {
+    const grounded = y <= 0.5;
+    const bob = (grounded && !GHOST) ? Math.sin(bobT * 2.2) * -2.5 : Math.sin(bobT * 1.8) * -3;
+    let rot = 0;
+    if (flip.active) {
+      const p = Math.min(1, (ts - flip.start) / flip.dur);
+      rot = 360 * flip.turns * p * dir;
+      if (p >= 1) flip.active = false;
+    } else if (!grounded && !GHOST) {
+      // No lean during a flip's last airborne frames — 360° ≡ 0°, land clean.
+      rot = activity === 'flip' ? 0 : -vy * 3 * dir;
+    } else if (moving) {
+      rot = activity === 'dash' ? 10 * dir : Math.sin(bobT * 9) * 6;
+    }
     squish += (1 - squish) * 0.18;
+    char.style.transformOrigin = (activity === 'flip' || !grounded) ? '50% 50%' : '50% 100%';
     char.style.transform =
-      'translateY(' + hop.toFixed(1) + 'px) rotate(' + waddle.toFixed(1) + 'deg)' +
+      'translateY(' + (bob - y).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
       ' scaleX(' + (dir * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
   }
 
   let lastTs = 0, pauseUntil = 0, walkMul = 1, walkA = 0;
+  let targetY = 0, activity = 'walk', hopsLeft = 0;
+  const GRAV = 0.5; // px per frame², frame = 16.7ms
 
   // Mostly short random hops, sometimes a long walk — with a fresh pace each
   // time, so the wandering doesn't read as edge-to-edge ping-pong.
@@ -306,24 +324,81 @@
     walkMul = 0.7 + Math.random() * 0.6;
   }
 
+  function maxApex() { return Math.max(12, stage.clientHeight - 100); }
+
+  function jump(power, withFlip, ts) {
+    if (reduced) return;
+    vy = power;
+    y = Math.max(y, 0.6); // leave the ground this frame
+    if (withFlip) {
+      flip = { active: true, start: ts, dur: (4 * power / GRAV) * 16.7 / 2, turns: Math.random() < 0.25 ? 2 : 1 };
+    }
+  }
+
+  function startRest(ts, ms) { activity = 'rest'; pauseUntil = ts + ms; }
+  function startWalk(w) { activity = 'walk'; pickTarget(w); }
+  function startDash(w) { activity = 'dash'; targetX = x < w / 2 ? w - 96 : 20; }
+  function startHops(w, ts) { activity = 'hops'; hopsLeft = 2 + Math.floor(Math.random() * 3); pickTarget(w); jump(3 + Math.random() * 1.5, false, ts); }
+  function startFlipJump(ts) {
+    activity = 'flip'; targetX = x;
+    const apex = Math.min(maxApex(), 45 + Math.random() * 70);
+    jump(Math.sqrt(2 * GRAV * apex), true, ts);
+  }
+
+  // What to do next, weighted by Claude's state — energetic while working,
+  // acrobatic when done, lazy when idle.
+  function scheduleNext(ts) {
+    const w = Math.max(120, stage.clientWidth);
+    const s = data.state, r = Math.random();
+    if (s === 'idle') {
+      if (r < 0.5) startWalk(w);
+      else if (r < 0.62) startHops(w, ts);
+      else if (r < 0.68) startFlipJump(ts);
+      else startRest(ts, 1800 + Math.random() * 4500);
+    } else if (s === 'working') {
+      if (r < 0.35) startWalk(w);
+      else if (r < 0.55) startDash(w);
+      else if (r < 0.75) startHops(w, ts);
+      else if (r < 0.88) startFlipJump(ts);
+      else startRest(ts, 250 + Math.random() * 800);
+    } else if (s === 'done') {
+      if (r < 0.35) startHops(w, ts);
+      else if (r < 0.7) startFlipJump(ts);
+      else startWalk(w);
+    } else {
+      if (r < 0.6) startWalk(w);
+      else startRest(ts, 300 + Math.random() * 600);
+    }
+  }
+
+  function pickGhostTarget(w) {
+    targetX = 20 + Math.random() * Math.max(1, w - 116);
+    targetY = Math.random() * Math.min(maxApex(), 170);
+  }
+
   function setLimbs(ts) {
-    const now = ts;
+    const grounded = y <= 0.5;
     let al = -walkA * 0.7, ar = walkA * 0.7;
-    if (now < pointUntil) {
-      ar = -92 + Math.sin(bobT * 3) * 4;          // arm out, pointing at you
+    let ll = walkA, lr = -walkA;
+    if (!grounded && !GHOST) {
+      ll = 24; lr = -24;                              // tuck legs in the air
+      al = flip.active ? 140 : 35; ar = flip.active ? -140 : -35;
+    }
+    if (ts < pointUntil) {
+      ar = -92 + Math.sin(bobT * 3) * 4;              // arm out, pointing at you
       al = 0;
     } else if (data.state === 'waiting') {
       const f = Math.sin(bobT * 12) * 14;
-      al = 150 + f; ar = -150 - f;               // both arms up, flailing
-    } else if (now < celebrateUntil) {
-      al = 160; ar = -160;                        // victory arms
-    } else if (now < wavingUntil) {
-      ar = -145 + Math.sin(bobT * 16) * 18;       // hello wave
+      al = 150 + f; ar = -150 - f;                    // both arms up, flailing
+    } else if (ts < celebrateUntil) {
+      al = 160; ar = -160;                            // victory arms
+    } else if (ts < wavingUntil) {
+      ar = -145 + Math.sin(bobT * 16) * 18;           // hello wave
     }
-    legl.setAttribute('transform', 'rotate(' + walkA + ' -13 20)');
-    legr.setAttribute('transform', 'rotate(' + (-walkA) + ' 13 20)');
-    arml.setAttribute('transform', 'rotate(' + al + ' -29 2)');
-    armr.setAttribute('transform', 'rotate(' + ar + ' 29 2)');
+    legl.setAttribute('transform', 'rotate(' + ll.toFixed(1) + ' -13 20)');
+    legr.setAttribute('transform', 'rotate(' + lr.toFixed(1) + ' 13 20)');
+    arml.setAttribute('transform', 'rotate(' + al.toFixed(1) + ' -29 2)');
+    armr.setAttribute('transform', 'rotate(' + ar.toFixed(1) + ' 29 2)');
   }
 
   function loop(ts) {
@@ -333,36 +408,78 @@
     lastTs = ts;
     const steps = dt / 16.7;
     const w = Math.max(120, stage.clientWidth);
-    // Every state roams now — idle is a lazy stroll with naps at rest stops.
-    const speed = (data.state === 'working' ? 1.6 : data.state === 'done' ? 1.0 : data.state === 'idle' ? 0.35 : 0.5) * walkMul;
-    const resting = ts < pauseUntil;
-    moving = !reduced && !resting;
-    if (moving) {
-      const step = speed * steps;
-      if (Math.abs(targetX - x) <= step) {
-        x = targetX;
-        pickTarget(w);
-        // Idle rest stops are long naps; busy states just catch a breath.
-        pauseUntil = ts + (data.state === 'idle' ? 1800 + Math.random() * 4500 : 250 + Math.random() * 800);
-      } else {
-        dir = targetX > x ? 1 : -1;
-        x += dir * step;
-        // Occasionally change its mind mid-walk.
-        if (Math.random() < 0.003 * steps) pickTarget(w);
+    const speed = (data.state === 'working' ? 1.6 : data.state === 'done' ? 1.0 : data.state === 'idle' ? 0.35 : 0.5)
+      * walkMul * (activity === 'dash' ? 3.2 : 1);
+    const resting = ts < pauseUntil || ts < pointUntil;
+    // Re-clamp targets to the current panel size — a resize mid-walk would
+    // otherwise leave an unreachable target pinning the buddy to the wall.
+    targetX = Math.max(20, Math.min(targetX, w - 96));
+    targetY = Math.max(0, Math.min(targetY, Math.max(0, stage.clientHeight - 100)));
+
+    if (GHOST) {
+      // The ghost owns the whole area: free 2D floating.
+      moving = !reduced && !resting;
+      if (moving) {
+        const dx = targetX - x, dy2 = targetY - y;
+        if (Math.hypot(dx, dy2) < 6) {
+          if (Math.random() < 0.35) startRest(ts, 800 + Math.random() * 2500);
+          pickGhostTarget(w);
+        } else {
+          if (Math.abs(dx) > 3) dir = dx > 0 ? 1 : -1;
+          const ease = Math.min(1, 0.02 * steps);
+          x += dx * ease; y += dy2 * ease;
+        }
       }
-    } else if (resting) {
-      // During idle naps, sometimes glance the other way.
-      if (data.state === 'idle' && Math.random() < 0.006 * steps) dir = -dir;
+    } else {
+      moving = !reduced && !resting && Math.abs(targetX - x) > 0.5 && activity !== 'flip';
+      if (moving) {
+        const step = speed * steps;
+        if (Math.abs(targetX - x) <= step) {
+          x = targetX;
+          if (y <= 0.5) scheduleNext(ts);
+        } else {
+          dir = targetX > x ? 1 : -1;
+          x += dir * step;
+          // Occasionally change its mind mid-walk.
+          if (activity === 'walk' && Math.random() < 0.003 * steps) pickTarget(w);
+        }
+      } else if (resting) {
+        if (data.state === 'idle' && Math.random() < 0.006 * steps) dir = -dir; // glance around
+      } else if (!reduced && y <= 0.5 && vy <= 0 && activity !== 'flip') {
+        // Rest expired (or a degenerate target) with nothing queued — the
+        // scheduler must run again or the buddy freezes here forever.
+        scheduleNext(ts);
+      }
+      // Jump physics.
+      if (y > 0 || vy > 0) {
+        y += vy * steps;
+        vy -= GRAV * steps;
+        const ceil = stage.clientHeight - 95;
+        if (y > ceil) { y = ceil; vy = Math.min(vy, 0); }
+        if (y <= 0) {
+          y = 0; vy = 0; squish = 0.78; flip.active = false;
+          if (activity === 'hops') {
+            if (hopsLeft > 0) { hopsLeft--; jump(3 + Math.random() * 1.5, false, ts); }
+            else scheduleNext(ts);
+          } else if (activity === 'flip') {
+            scheduleNext(ts);
+          }
+        }
+      } else if (!reduced && !resting && data.state === 'waiting' && Math.random() < 0.05 * steps) {
+        jump(4.5, false, ts);                         // urgent bouncing
+      }
     }
-    // Walk cycle: legs step and arms swing only while actually moving.
-    walkA += ((moving ? Math.sin(bobT * 10) * 26 : 0) - walkA) * Math.min(1, 0.25 * steps);
-    setNap(data.state === 'idle' && (resting || reduced));
+
+    // Walk cycle: legs step and arms swing only while grounded and moving.
+    walkA += (((moving && y <= 0.5 && !GHOST) ? Math.sin(bobT * 10) * 26 : 0) - walkA) * Math.min(1, 0.25 * steps);
+    setNap(data.state === 'idle' && ts < pauseUntil && ts >= pointUntil);
     x = Math.max(4, Math.min(x, w - 84));
     char.style.left = x + 'px';
-    applyTransform();
+    applyTransform(ts);
     setLimbs(ts);
     if (data.state === 'working' && Math.random() < 0.006 * steps) fx('⚙', 30);
-    if (data.state === 'idle' && (resting || reduced) && Math.random() < 0.01 * steps) fx('z', 34);
+    if (activity === 'dash' && moving && Math.random() < 0.05 * steps) fx('💨', dir < 0 ? 62 : -22);
+    if (data.state === 'idle' && (ts < pauseUntil || reduced) && Math.random() < 0.01 * steps) fx('z', 34);
     if (data.state === 'waiting' && Math.random() < 0.02 * steps) fx('!', 30);
     requestAnimationFrame(loop);
   }
