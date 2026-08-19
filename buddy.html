@@ -215,8 +215,10 @@
     bubble.style.maxWidth = bw + 'px';
     const left = Math.max(6, Math.min(x - 20, stage.clientWidth - bubble.offsetWidth - 8));
     bubble.style.left = left + 'px';
-    // Clamp into view — short panels would otherwise clip the bubble away.
-    bubble.style.bottom = Math.max(4, Math.min(98, stage.clientHeight - bubble.offsetHeight - 4)) + 'px';
+    // Follow the buddy vertically (it may be on a wall or the ceiling) and
+    // clamp into view — short panels would otherwise clip the bubble away.
+    const base = Math.min(stage.clientHeight - bubble.offsetHeight - 4, Math.max(98, y + 92));
+    bubble.style.bottom = Math.max(4, base) + 'px';
     bubble.classList.add('show');
     clearTimeout(bubbleTimer);
     bubbleTimer = setTimeout(() => bubble.classList.remove('show'), ms || 4500);
@@ -295,7 +297,11 @@
     const grounded = y <= 0.5;
     const bob = (grounded && !GHOST) ? Math.sin(bobT * 2.2) * -2.5 : Math.sin(bobT * 1.8) * -3;
     let rot = 0;
-    if (flip.active) {
+    const onSurface = Math.abs(surfCur) > 1 || surfTarget !== 0;
+    if (onSurface) {
+      // Climbing a wall or crawling the ceiling — orientation follows the surface.
+      rot = surfCur + (activity === 'climb' && moving ? Math.sin(bobT * 9) * 4 : 0);
+    } else if (flip.active) {
       const p = Math.min(1, (ts - flip.start) / flip.dur);
       rot = 360 * flip.turns * p * dir;
       if (p >= 1) flip.active = false;
@@ -306,7 +312,7 @@
       rot = activity === 'dash' ? 10 * dir : Math.sin(bobT * 9) * 6;
     }
     squish += (1 - squish) * 0.18;
-    char.style.transformOrigin = (activity === 'flip' || !grounded) ? '50% 50%' : '50% 100%';
+    char.style.transformOrigin = (activity === 'flip' || onSurface || !grounded) ? '50% 50%' : '50% 100%';
     char.style.transform =
       'translateY(' + (bob - y).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
       ' scaleX(' + (dir * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
@@ -314,6 +320,7 @@
 
   let lastTs = 0, pauseUntil = 0, walkMul = 1, walkA = 0;
   let targetY = 0, activity = 'walk', hopsLeft = 0;
+  let climb = null, surfCur = 0, surfTarget = 0;
   const GRAV = 0.5; // px per frame², frame = 16.7ms
 
   // Mostly short random hops, sometimes a long walk — with a fresh pace each
@@ -348,6 +355,12 @@
     const apex = Math.min(maxApex(), 45 + Math.random() * 70);
     jump(Math.sqrt(2 * GRAV * apex), true, ts);
   }
+  function startClimb(w) {
+    activity = 'climb';
+    const side = Math.random() < 0.5 ? -1 : 1;   // -1 = left wall, 1 = right wall
+    climb = { phase: 'approach', side };
+    targetX = side < 0 ? 4 : w - 84;
+  }
 
   // What to do next, weighted by Claude's state — energetic while working,
   // acrobatic when done, lazy when idle.
@@ -355,19 +368,22 @@
     const w = Math.max(120, stage.clientWidth);
     const s = data.state, r = Math.random();
     if (s === 'idle') {
-      if (r < 0.5) startWalk(w);
-      else if (r < 0.62) startHops(w, ts);
-      else if (r < 0.68) startFlipJump(ts);
+      if (r < 0.45) startWalk(w);
+      else if (r < 0.57) startHops(w, ts);
+      else if (r < 0.63) startFlipJump(ts);
+      else if (r < 0.75) startClimb(w);
       else startRest(ts, 1800 + Math.random() * 4500);
     } else if (s === 'working') {
-      if (r < 0.35) startWalk(w);
-      else if (r < 0.55) startDash(w);
-      else if (r < 0.75) startHops(w, ts);
-      else if (r < 0.88) startFlipJump(ts);
+      if (r < 0.3) startWalk(w);
+      else if (r < 0.48) startDash(w);
+      else if (r < 0.66) startHops(w, ts);
+      else if (r < 0.78) startFlipJump(ts);
+      else if (r < 0.9) startClimb(w);
       else startRest(ts, 250 + Math.random() * 800);
     } else if (s === 'done') {
       if (r < 0.35) startHops(w, ts);
-      else if (r < 0.7) startFlipJump(ts);
+      else if (r < 0.65) startFlipJump(ts);
+      else if (r < 0.8) startClimb(w);
       else startWalk(w);
     } else {
       if (r < 0.6) startWalk(w);
@@ -381,7 +397,7 @@
   }
 
   function setLimbs(ts) {
-    const grounded = y <= 0.5;
+    const grounded = y <= 0.5 || activity === 'climb';
     let al = -walkA * 0.7, ar = walkA * 0.7;
     let ll = walkA, lr = -walkA;
     if (!grounded && !GHOST) {
@@ -417,7 +433,7 @@
     const resting = ts < pauseUntil || ts < pointUntil;
     // Re-clamp targets to the current panel size — a resize mid-walk would
     // otherwise leave an unreachable target pinning the buddy to the wall.
-    targetX = Math.max(20, Math.min(targetX, w - 96));
+    targetX = Math.max(4, Math.min(targetX, w - 84));
     targetY = Math.max(0, Math.min(targetY, Math.max(0, stage.clientHeight - 100)));
 
     if (GHOST) {
@@ -434,8 +450,49 @@
           x += dx * ease; y += dy2 * ease;
         }
       }
+    } else if (activity === 'climb' && climb) {
+      // Wall climbing and upside-down ceiling crawling.
+      moving = !reduced && !resting;
+      const ceilY = Math.max(20, stage.clientHeight - 95);
+      if (moving) {
+        const cs = 0.9 * walkMul * steps;
+        if (climb.phase === 'approach') {
+          const step = speed * steps;
+          if (Math.abs(targetX - x) <= step) { x = targetX; climb.phase = 'up'; }
+          else { dir = targetX > x ? 1 : -1; x += dir * step; }
+        } else if (climb.phase === 'up') {
+          // Re-pin to the wall each frame — the panel may resize mid-climb.
+          x = targetX = climb.side < 0 ? 4 : w - 84;
+          y += cs;
+          if (y >= ceilY) {
+            y = ceilY; climb.phase = 'ceil';
+            climb.exitMode = Math.random() < 0.5 ? 'drop' : 'across';
+            targetX = climb.exitMode === 'across'
+              ? (climb.side < 0 ? w - 84 : 4)
+              : 30 + Math.random() * Math.max(1, w - 140);
+          }
+        } else if (climb.phase === 'ceil') {
+          y = ceilY; // stay glued to the ceiling through resizes, both directions
+          const step = 0.8 * walkMul * steps;
+          if (Math.abs(targetX - x) <= step) {
+            x = targetX;
+            if (climb.exitMode === 'across') climb.phase = 'down';
+            else { climb = null; activity = 'drop'; vy = 0; surfTarget = 360; } // let go!
+          } else { dir = targetX > x ? 1 : -1; x += dir * step; }
+        } else if (climb.phase === 'down') {
+          x = targetX = climb.side < 0 ? w - 84 : 4; // descending the opposite wall
+          y -= cs;
+          if (y <= 0) { y = 0; climb = null; surfTarget = 0; scheduleNext(ts); }
+        }
+      }
+      if (climb) {
+        surfTarget = climb.phase === 'ceil' ? 180
+          : climb.phase === 'up' ? (climb.side < 0 ? 90 : -90)
+          : climb.phase === 'down' ? (climb.side < 0 ? -90 : 90)
+          : 0;
+      }
     } else {
-      moving = !reduced && !resting && Math.abs(targetX - x) > 0.5 && activity !== 'flip';
+      moving = !reduced && !resting && Math.abs(targetX - x) > 0.5 && activity !== 'flip' && activity !== 'drop';
       if (moving) {
         const step = speed * steps;
         if (Math.abs(targetX - x) <= step) {
@@ -449,12 +506,12 @@
         }
       } else if (resting) {
         if (data.state === 'idle' && Math.random() < 0.006 * steps) dir = -dir; // glance around
-      } else if (!reduced && y <= 0.5 && vy <= 0 && activity !== 'flip') {
+      } else if (!reduced && y <= 0.5 && vy <= 0 && activity !== 'flip' && activity !== 'drop') {
         // Rest expired (or a degenerate target) with nothing queued — the
         // scheduler must run again or the buddy freezes here forever.
         scheduleNext(ts);
       }
-      // Jump physics.
+      // Jump / fall physics.
       if (y > 0 || vy > 0) {
         y += vy * steps;
         vy -= GRAV * steps;
@@ -465,7 +522,10 @@
           if (activity === 'hops') {
             if (hopsLeft > 0) { hopsLeft--; jump(3 + Math.random() * 1.5, false, ts); }
             else scheduleNext(ts);
-          } else if (activity === 'flip') {
+          } else if (activity === 'flip' || activity === 'drop') {
+            // Normalize the leftover roll so it eases the last few degrees to 0
+            // in the same spin direction — short falls would otherwise pop.
+            if (activity === 'drop') { surfCur -= 360; surfTarget = 0; }
             scheduleNext(ts);
           }
         }
@@ -473,9 +533,11 @@
         jump(4.5, false, ts);                         // urgent bouncing
       }
     }
+    surfCur += (surfTarget - surfCur) * Math.min(1, 0.15 * steps);
 
-    // Walk cycle: legs step and arms swing only while grounded and moving.
-    walkA += (((moving && y <= 0.5 && !GHOST) ? Math.sin(bobT * 10) * 26 : 0) - walkA) * Math.min(1, 0.25 * steps);
+    // Walk cycle: legs step while walking on the floor OR crawling a surface.
+    const legsActive = !GHOST && moving && (y <= 0.5 || activity === 'climb');
+    walkA += ((legsActive ? Math.sin(bobT * 10) * (activity === 'climb' ? 18 : 26) : 0) - walkA) * Math.min(1, 0.25 * steps);
     setNap(data.state === 'idle' && ts < pauseUntil && ts >= pointUntil);
     x = Math.max(4, Math.min(x, w - 84));
     char.style.left = x + 'px';
