@@ -129,7 +129,7 @@
     </svg>
   </div>
   <div id="bubble"></div>
-  <span id="hint">click your buddy — it talks · set your own image via “Claude Pulse: Choose Buddy Character”</span>
+  <span id="hint">click your buddy — it talks · change it via “Claude Pulse: Choose Buddy Character”</span>
 </div>
 
 <script nonce="{{nonce}}">
@@ -223,6 +223,10 @@
   }
 
   const NAME = esc("{{name}}") || 'friend';
+  if (NAME !== 'friend') {
+    document.getElementById('hint').textContent =
+      NAME + '’s buddy · click it — it talks';
+  }
   function cheer() {
     return pick([
       'You’re crushing it, <b>' + NAME + '</b>! 👉 Keep going.',

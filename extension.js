@@ -73,6 +73,8 @@ class BuddyProvider {
     const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     const charRaw = vscode.workspace.getConfiguration('claudePulse').get('buddyCharacter');
     const character = ['critter', 'robot', 'cat', 'ghost'].includes(charRaw) ? charRaw : 'critter';
+    // It's the user's buddy, not Claude's — title the view after them.
+    try { view.title = buddyName() ? buddyName() + '’s Buddy' : 'Buddy'; } catch { /* disposed */ }
     try {
       const imgUri = imgPath ? view.webview.asWebviewUri(vscode.Uri.file(imgPath)).toString() : '';
       // Function replacers: a `$` in a path would otherwise trigger
