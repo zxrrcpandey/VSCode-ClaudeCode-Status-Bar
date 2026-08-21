@@ -20,6 +20,7 @@ let usageBusy = false;
 let buddy = null;
 let lastBuddyData = null;
 let gitName = '';
+const CHARACTERS = ['critter', 'robot', 'cat', 'pup', 'turtle', 'snail', 'bee', 'dragon', 'ghost'];
 
 // The buddy addresses the user by name: claudePulse.buddyName wins, otherwise
 // the first name from git config user.name. Sanitized — it lands in webview HTML.
@@ -72,7 +73,7 @@ class BuddyProvider {
     try { html = fs.readFileSync(path.join(__dirname, 'buddy.html'), 'utf8'); } catch { return; }
     const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
     const charRaw = vscode.workspace.getConfiguration('claudePulse').get('buddyCharacter');
-    const character = ['critter', 'robot', 'cat', 'ghost'].includes(charRaw) ? charRaw : 'critter';
+    const character = CHARACTERS.includes(charRaw) ? charRaw : 'critter';
     // It's the user's buddy, not Claude's — title the view after them.
     try { view.title = buddyName() ? buddyName() + '’s Buddy' : 'Buddy'; } catch { /* disposed */ }
     try {
@@ -458,9 +459,14 @@ function activate(context) {
     vscode.commands.registerCommand('claudePulse.chooseBuddy', async () => {
       const cfg = vscode.workspace.getConfiguration('claudePulse');
       const choice = await vscode.window.showQuickPick([
-        { label: '🐹 Critter', description: 'round and amber, the default', id: 'critter' },
-        { label: '🤖 Robot', description: 'antenna, screen face', id: 'robot' },
-        { label: '🐱 Cat', description: 'ears, tail, judgment', id: 'cat' },
+        { label: '🐹 Critter', description: 'round and amber, the default · climbs, leaps 55%', id: 'critter' },
+        { label: '🤖 Robot', description: 'antenna, screen face · heavy, leaps 30%', id: 'robot' },
+        { label: '🐱 Cat', description: 'ears, tail, judgment · agile, leaps 85%', id: 'cat' },
+        { label: '🐶 Pup', description: 'four legs, floppy ears, fast · leaps 60%', id: 'pup' },
+        { label: '🐢 Turtle', description: 'small, four legs, very slow · leaps 5% (bless it)', id: 'turtle' },
+        { label: '🐌 Snail', description: 'tiny and slowest · slowly crawls walls and ceiling', id: 'snail' },
+        { label: '🐝 Bee', description: 'tiny, fast, buzzing wings · flies everywhere', id: 'bee' },
+        { label: '🐉 Dragon', description: 'big, slow wingbeats · glides the whole panel', id: 'dragon' },
         { label: '👻 Ghost', description: 'floats, never sleeps quietly', id: 'ghost' },
         { label: '🖼️ My own image…', description: 'PNG / JPG / WebP / SVG / animated GIF', id: 'image' },
       ], { placeHolder: 'Pick your buddy character' });

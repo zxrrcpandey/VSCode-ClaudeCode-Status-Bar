@@ -20,7 +20,7 @@
     transition: filter .2s;
   }
   #char:hover { filter: brightness(1.1); }
-  #char svg { width: 100%; height: 100%; display: block; }
+  #char svg { width: 100%; height: 100%; display: block; overflow: visible; }
   #charimg {
     display: none; width: 100%; height: 100%;
     object-fit: contain; object-position: bottom;
@@ -29,7 +29,6 @@
   .ear { fill: #d99347; }
   .earin { fill: #b8763a; }
   #body { fill: #f2b366; }
-  .foot { fill: #d99347; }
   .cheek { fill: rgba(226, 120, 100, .45); }
   .eye { fill: #ffffff; }
   .pupil { fill: #3a2c18; }
@@ -84,10 +83,22 @@
     <img id="charimg" alt="buddy">
     <svg id="charsvg" viewBox="-60 -60 120 120">
       <g id="limbs" fill="#d99347">
+        <!-- biped -->
         <g id="legl"><rect x="-17" y="18" width="8" height="17" rx="4"/></g>
         <g id="legr"><rect x="9" y="18" width="8" height="17" rx="4"/></g>
         <g id="arml"><rect x="-33" y="0" width="8" height="24" rx="4"/></g>
         <g id="armr"><rect x="25" y="0" width="8" height="24" rx="4"/></g>
+        <!-- quadruped: front-left, back-left, back-right, front-right -->
+        <g id="qfl"><rect x="-30" y="16" width="8" height="18" rx="4"/></g>
+        <g id="qbl"><rect x="-14" y="18" width="8" height="16" rx="4"/></g>
+        <g id="qbr"><rect x="6" y="18" width="8" height="16" rx="4"/></g>
+        <g id="qfr"><rect x="22" y="16" width="8" height="18" rx="4"/></g>
+        <!-- small insect wings -->
+        <g id="wingl"><ellipse cx="-24" cy="-16" rx="20" ry="8" fill="#ffffff" fill-opacity=".75" stroke="#c9d3e3" stroke-width="1.2" transform="rotate(-28 -6 -10)"/></g>
+        <g id="wingr"><ellipse cx="24" cy="-16" rx="20" ry="8" fill="#ffffff" fill-opacity=".75" stroke="#c9d3e3" stroke-width="1.2" transform="rotate(28 6 -10)"/></g>
+        <!-- big dragon wings -->
+        <g id="dwingl"><path d="M -8 -6 L -48 -40 L -54 -10 L -46 12 L -24 16 L -8 4 Z" fill="#3f7a50" stroke="#2f5e3c" stroke-width="1.5"/></g>
+        <g id="dwingr"><path d="M 8 -6 L 48 -40 L 54 -10 L 46 12 L 24 16 L 8 4 Z" fill="#3f7a50" stroke="#2f5e3c" stroke-width="1.5"/></g>
       </g>
       <g id="body-critter">
         <circle class="ear" cx="-17" cy="-25" r="10"/>
@@ -112,6 +123,46 @@
       </g>
       <g id="body-ghost" style="display:none">
         <path d="M -28 31 L -28 -2 A 28 28 0 0 1 28 -2 L 28 31 L 18.5 23 L 9.5 31 L 0 23 L -9.5 31 L -18.5 23 Z" fill="#dfe6f2" stroke="#b9c4d8" stroke-width="1.5"/>
+      </g>
+      <g id="body-pup" style="display:none">
+        <path d="M 30 6 Q 48 0 44 -16" stroke="#a9764f" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <ellipse cx="-27" cy="-12" rx="8" ry="16" fill="#a9764f" transform="rotate(18 -27 -12)"/>
+        <ellipse cx="27" cy="-12" rx="8" ry="16" fill="#a9764f" transform="rotate(-18 27 -12)"/>
+        <ellipse cx="0" cy="6" rx="32" ry="25" fill="#c9956a"/>
+        <ellipse cx="0" cy="13" rx="11" ry="7" fill="#ecd2b6"/>
+      </g>
+      <g id="body-turtle" style="display:none">
+        <path d="M -34 10 A 34 34 0 0 1 34 10 Z" fill="#6fa36b" stroke="#557f52" stroke-width="1.5"/>
+        <circle cx="0" cy="-14" r="7" fill="#557f52" fill-opacity=".55"/>
+        <circle cx="-16" cy="-4" r="6" fill="#557f52" fill-opacity=".55"/>
+        <circle cx="16" cy="-4" r="6" fill="#557f52" fill-opacity=".55"/>
+        <ellipse cx="0" cy="14" rx="24" ry="15" fill="#a8c98a"/>
+      </g>
+      <g id="body-bee" style="display:none">
+        <line x1="-8" y1="-16" x2="-15" y2="-31" stroke="#2b2b2b" stroke-width="2"/>
+        <line x1="8" y1="-16" x2="15" y2="-31" stroke="#2b2b2b" stroke-width="2"/>
+        <circle cx="-15" cy="-32" r="3" fill="#2b2b2b"/>
+        <circle cx="15" cy="-32" r="3" fill="#2b2b2b"/>
+        <ellipse cx="0" cy="6" rx="26" ry="23" fill="#f2c94c"/>
+        <ellipse cx="0" cy="12" rx="25" ry="4.5" fill="#2b2b2b"/>
+        <ellipse cx="0" cy="22" rx="19" ry="4" fill="#2b2b2b"/>
+        <path d="M -4 28 L 4 28 L 0 38 Z" fill="#2b2b2b"/>
+      </g>
+      <g id="body-dragon" style="display:none">
+        <path d="M 28 12 Q 52 18 48 -6" stroke="#5fa86f" stroke-width="8" fill="none" stroke-linecap="round"/>
+        <path d="M 44 -2 L 54 -12 L 40 -12 Z" fill="#5fa86f"/>
+        <path d="M -14 -24 L -19 -42 L -6 -30 Z" fill="#e9d7a0"/>
+        <path d="M 14 -24 L 19 -42 L 6 -30 Z" fill="#e9d7a0"/>
+        <ellipse cx="0" cy="4" rx="30" ry="27" fill="#5fa86f"/>
+        <ellipse cx="0" cy="13" rx="18" ry="13" fill="#bfe3a8"/>
+      </g>
+      <!-- head on +x: dir=+1 means moving right, so the face leads -->
+      <g id="body-snail" style="display:none">
+        <ellipse cx="8" cy="22" rx="36" ry="11" fill="#b9c97a"/>
+        <circle cx="30" cy="8" r="15" fill="#b9c97a"/>
+        <circle cx="-14" cy="0" r="23" fill="#c98d5a" stroke="#a56f3f" stroke-width="1.5"/>
+        <circle cx="-14" cy="0" r="14" fill="none" stroke="#a56f3f" stroke-width="2.5"/>
+        <circle cx="-14" cy="0" r="6" fill="none" stroke="#a56f3f" stroke-width="2.5"/>
       </g>
       <g id="face">
         <circle class="cheek" cx="-17" cy="6" r="5"/>
@@ -141,12 +192,13 @@
   const stage = document.getElementById('stage');
   const mouth = document.getElementById('mouth');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const $ = (id) => document.getElementById(id);
 
   const IMG = "{{img}}";
   let imgMode = IMG.length > 0;
   if (imgMode) {
     charimg.onerror = () => {
-      // Image gone or unreadable — fall back to the built-in critter
+      // Image gone or unreadable — fall back to the built-in character
       // instead of an invisible buddy.
       imgMode = false;
       charimg.style.display = 'none';
@@ -158,18 +210,56 @@
     charsvg.style.display = 'none';
   }
 
+  // ---- Character traits -------------------------------------------------
+  // kind: biped | quad | flyer | slider. scale sizes the whole character.
+  // speed multiplies walking/crawling. leap = chance to grab the ceiling.
+  const CHARS = {
+    critter: { kind: 'biped',  scale: 1,    speed: 1,    leap: 0.55, climb: true,  jumps: true,  limb: '#d99347' },
+    robot:   { kind: 'biped',  scale: 1,    speed: 0.9,  leap: 0.3,  climb: true,  jumps: true,  limb: '#8a97a8' },
+    cat:     { kind: 'biped',  scale: 1,    speed: 1.1,  leap: 0.85, climb: true,  jumps: true,  limb: '#848a94' },
+    pup:     { kind: 'quad',   scale: 1,    speed: 1.25, leap: 0.6,  climb: true,  jumps: true,  limb: '#a9764f' },
+    turtle:  { kind: 'quad',   scale: 0.8,  speed: 0.3,  leap: 0.05, climb: false, jumps: true,  limb: '#8fb072', face: [0, 4, 0.9] },
+    snail:   { kind: 'slider', scale: 0.55, speed: 0.2,  leap: 0,    climb: true,  jumps: false, climbSpeed: 0.35, face: [30, 10, 0.72] },
+    bee:     { kind: 'flyer',  scale: 0.5,  ease: 0.06,  retarget: 0.02,  restP: 0.12, flap: 9,   flapAmp: 32, bobAmp: 4, wings: 'small', face: [0, -2, 0.9] },
+    dragon:  { kind: 'flyer',  scale: 1.5,  ease: 0.012, retarget: 0.002, restP: 0.4,  flap: 0.9, flapAmp: 18, bobAmp: 5, wings: 'big',   face: [0, -4, 1] },
+    ghost:   { kind: 'flyer',  scale: 1,    ease: 0.02,  retarget: 0,     restP: 0.35, flap: 0,   flapAmp: 0,  bobAmp: 3, wings: 'none', arms: true, limb: '#c6d1e4' },
+  };
   const CHARACTER = "{{char}}";
-  const BODIES = ['body-critter', 'body-robot', 'body-cat', 'body-ghost'];
-  const activeBody = 'body-' + CHARACTER;
-  BODIES.forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.style.display = (BODIES.indexOf(activeBody) >= 0 ? id === activeBody : id === 'body-critter') ? '' : 'none';
+  // In image mode the built-in art is hidden; if the image fails to load we
+  // fall back to the critter — body AND traits, so the two always agree.
+  const charKey = (!imgMode && CHARS[CHARACTER]) ? CHARACTER : 'critter';
+  const C = imgMode
+    ? { kind: 'biped', scale: 1, speed: 1, leap: 0.5, climb: true, jumps: true }
+    : CHARS[charKey];
+  const AIR = C.kind === 'flyer';
+  const CH = Math.round(78 * (C.scale || 1));   // character box in px
+  char.style.width = CH + 'px';
+  char.style.height = CH + 'px';
+
+  Object.keys(CHARS).forEach((id) => {
+    const el = $('body-' + id);
+    if (el) el.style.display = id === charKey ? '' : 'none';
   });
-  const LIMB_COLORS = { critter: '#d99347', robot: '#8a97a8', cat: '#848a94', ghost: '#c6d1e4' };
-  document.getElementById('limbs').setAttribute('fill', LIMB_COLORS[CHARACTER] || LIMB_COLORS.critter);
-  const legl = document.getElementById('legl'), legr = document.getElementById('legr');
-  const arml = document.getElementById('arml'), armr = document.getElementById('armr');
-  if (CHARACTER === 'ghost') { legl.style.display = 'none'; legr.style.display = 'none'; }
+  if (C.face) $('face').setAttribute('transform', 'translate(' + C.face[0] + ' ' + C.face[1] + ') scale(' + C.face[2] + ')');
+  $('limbs').setAttribute('fill', C.limb || '#d99347');
+  const LIMB_SETS = {
+    biped:  ['legl', 'legr', 'arml', 'armr'],
+    quad:   ['qfl', 'qbl', 'qbr', 'qfr'],
+    flyer:  (C.wings === 'small' ? ['wingl', 'wingr'] : C.wings === 'big' ? ['dwingl', 'dwingr'] : [])
+              .concat(C.arms ? ['arml', 'armr'] : []),
+    slider: [],
+  };
+  const visibleLimbs = LIMB_SETS[C.kind] || LIMB_SETS.biped;
+  ['legl', 'legr', 'arml', 'armr', 'qfl', 'qbl', 'qbr', 'qfr', 'wingl', 'wingr', 'dwingl', 'dwingr']
+    .forEach((id) => { $(id).style.display = visibleLimbs.indexOf(id) >= 0 ? '' : 'none'; });
+
+  // Geometry helpers derived from the character size.
+  const PAD = 6;
+  const wallR = (w) => w - CH - PAD;                      // x of the right wall
+  const innerR = (w) => w - CH - PAD - 12;                // keep-away for random targets
+  const span = (w) => Math.max(1, w - CH - 38);
+  const ceilH = () => Math.max(20, stage.clientHeight - CH - 17);
+  const maxApex = () => Math.max(12, stage.clientHeight - CH - 22);
 
   let data = { state: 'idle' };
   let x = 60, targetX = 200, bubbleTimer = null, lastFx = 0;
@@ -215,9 +305,9 @@
     bubble.style.maxWidth = bw + 'px';
     const left = Math.max(6, Math.min(x - 20, stage.clientWidth - bubble.offsetWidth - 8));
     bubble.style.left = left + 'px';
-    // Follow the buddy vertically (it may be on a wall or the ceiling) and
-    // clamp into view — short panels would otherwise clip the bubble away.
-    const base = Math.min(stage.clientHeight - bubble.offsetHeight - 4, Math.max(98, y + 92));
+    // Follow the buddy vertically (it may be on a wall, the ceiling, or in
+    // the air) and clamp into view — short panels would otherwise clip it.
+    const base = Math.min(stage.clientHeight - bubble.offsetHeight - 4, Math.max(CH + 20, y + CH + 14));
     bubble.style.bottom = Math.max(4, base) + 'px';
     bubble.classList.add('show');
     clearTimeout(bubbleTimer);
@@ -226,8 +316,7 @@
 
   const NAME = esc("{{name}}") || 'friend';
   if (NAME !== 'friend') {
-    document.getElementById('hint').textContent =
-      NAME + '’s buddy · click it — it talks';
+    $('hint').textContent = NAME + '’s buddy · click it — it talks';
   }
   function cheer() {
     return pick([
@@ -258,16 +347,15 @@
     const el = document.createElement('span');
     el.className = 'fx';
     el.textContent = txt;
-    el.style.left = (x + 22 + (dx || 0)) + 'px';
-    el.style.bottom = (88 + y) + 'px';   // follow the buddy up walls/ceiling
+    el.style.left = (x + CH * 0.28 + (dx || 0)) + 'px';
+    el.style.bottom = (CH + 10 + y) + 'px';   // follow the buddy up walls/ceiling
     stage.appendChild(el);
     setTimeout(() => el.remove(), 1700);
   }
 
-  const show = (id, on) => document.getElementById(id).style.display = on ? '' : 'none';
+  const show = (id, on) => $(id).style.display = on ? '' : 'none';
   let napping = false;
-  // Eyes close only while resting between strolls (or on error) — the buddy
-  // roams in every state now, so "idle" is a stroll, not a statue.
+  // Eyes close only while resting between strolls (or on error).
   function setNap(on) {
     if (imgMode || napping === on) return;
     napping = on;
@@ -291,11 +379,10 @@
   let bobT = 0, dir = 1, moving = false, squish = 1;
   let y = 0, vy = 0;
   let flip = { active: false, start: 0, dur: 0, turns: 1 };
-  const GHOST = CHARACTER === 'ghost' && !imgMode;
 
   function applyTransform(ts) {
     const grounded = y <= 0.5;
-    const bob = (grounded && !GHOST) ? Math.sin(bobT * 2.2) * -2.5 : Math.sin(bobT * 1.8) * -3;
+    const bob = (grounded && !AIR) ? Math.sin(bobT * 2.2) * -2.5 : Math.sin(bobT * 1.8) * -(C.bobAmp || 3);
     let rot = 0;
     const onSurface = Math.abs(surfCur) > 1 || surfTarget !== 0;
     if (activity === 'hang') {
@@ -307,11 +394,11 @@
       const p = Math.min(1, (ts - flip.start) / flip.dur);
       rot = 360 * flip.turns * p * dir;
       if (p >= 1) flip.active = false;
-    } else if (!grounded && !GHOST) {
+    } else if (!grounded && !AIR) {
       // No lean during a flip's last airborne frames — 360° ≡ 0°, land clean.
       rot = activity === 'flip' ? 0 : -vy * 3 * dir;
     } else if (moving) {
-      rot = activity === 'dash' ? 10 * dir : Math.sin(bobT * 9) * 6;
+      rot = AIR ? dir * 4 : activity === 'dash' ? 10 * dir : Math.sin(bobT * 9) * (C.kind === 'slider' ? 2 : 6);
     }
     squish += (1 - squish) * 0.18;
     char.style.transformOrigin = activity === 'hang' ? '50% 0%'
@@ -326,36 +413,33 @@
   let climb = null, surfCur = 0, surfTarget = 0;
   let leap = null, hangUntil = 0, dropRoll = false;
   const GRAV = 0.5; // px per frame², frame = 16.7ms
-  // How good each character is at leaping up to grab the ceiling.
-  const LEAP_SKILL = { cat: 0.85, critter: 0.55, robot: 0.3, ghost: 0 };
-  const leapSkill = imgMode ? 0.5 : (LEAP_SKILL[CHARACTER] !== undefined ? LEAP_SKILL[CHARACTER] : 0.55);
+  const canJump = C.jumps !== false, canClimb = C.climb !== false;
+  const leapSkill = C.leap || 0;
 
   // Mostly short random hops, sometimes a long walk — with a fresh pace each
   // time, so the wandering doesn't read as edge-to-edge ping-pong.
   function pickTarget(w) {
     if (Math.random() < 0.6) {
       const hop = (40 + Math.random() * 90) * (Math.random() < 0.5 ? -1 : 1);
-      targetX = Math.max(20, Math.min(w - 96, x + hop));
+      targetX = Math.max(20, Math.min(innerR(w), x + hop));
     } else {
-      targetX = 20 + Math.random() * Math.max(1, w - 116);
+      targetX = 20 + Math.random() * span(w);
     }
     walkMul = 0.7 + Math.random() * 0.6;
   }
-
-  function maxApex() { return Math.max(12, stage.clientHeight - 100); }
 
   function jump(power, withFlip, ts) {
     if (reduced) return;
     vy = power;
     y = Math.max(y, 0.6); // leave the ground this frame
     if (withFlip) {
-      flip = { active: true, start: ts, dur: (4 * power / GRAV) * 16.7 / 2, turns: Math.random() < 0.25 ? 2 : 1 };
+      flip = { active: true, start: ts, dur: (2 * power / GRAV) * 16.7, turns: Math.random() < 0.25 ? 2 : 1 };
     }
   }
 
   function startRest(ts, ms) { activity = 'rest'; pauseUntil = ts + ms; }
   function startWalk(w) { activity = 'walk'; pickTarget(w); }
-  function startDash(w) { activity = 'dash'; targetX = x < w / 2 ? w - 96 : 20; }
+  function startDash(w) { activity = 'dash'; targetX = x < w / 2 ? innerR(w) : 20; }
   function startHops(w, ts) { activity = 'hops'; hopsLeft = 2 + Math.floor(Math.random() * 3); pickTarget(w); jump(3 + Math.random() * 1.5, false, ts); }
   function startFlipJump(ts) {
     activity = 'flip'; targetX = x;
@@ -366,82 +450,101 @@
     activity = 'climb';
     const side = Math.random() < 0.5 ? -1 : 1;   // -1 = left wall, 1 = right wall
     climb = { phase: 'approach', side };
-    targetX = side < 0 ? 4 : w - 84;
+    targetX = side < 0 ? 4 : wallR(w);
   }
   // Crouch, then leap for the ceiling. Success is decided up front by the
   // character's skill; a miss peaks visibly short and tumbles back down.
   function startLeap(ts, w) {
-    if (stage.clientHeight - 95 < 30) { startWalk(w); return; }
+    if (ceilH() < 30) { startWalk(w); return; }
     activity = 'leap'; targetX = x; squish = 0.8;
     leap = { phase: 'crouch', until: ts + 350, success: Math.random() < leapSkill };
   }
 
-  // What to do next, weighted by Claude's state — energetic while working,
-  // acrobatic when done, lazy when idle.
+  // What to do next, weighted by Claude's state and what this character can
+  // actually do — energetic while working, acrobatic when done, lazy when idle.
   function scheduleNext(ts) {
     const w = Math.max(120, stage.clientWidth);
-    const s = data.state, r = Math.random();
+    const s = data.state;
+    const opts = [];
+    const add = (wt, fn) => { if (wt > 0) opts.push([wt, fn]); };
+    const walk = () => startWalk(w), dash = () => startDash(w), hops = () => startHops(w, ts);
+    const flipJ = () => startFlipJump(ts), clmb = () => startClimb(w), lp = () => startLeap(ts, w);
     if (s === 'idle') {
-      if (r < 0.4) startWalk(w);
-      else if (r < 0.52) startHops(w, ts);
-      else if (r < 0.58) startFlipJump(ts);
-      else if (r < 0.68) startClimb(w);
-      else if (r < 0.78) startLeap(ts, w);
-      else startRest(ts, 1800 + Math.random() * 4500);
+      add(40, walk); add(canJump ? 12 : 0, hops); add(canJump ? 6 : 0, flipJ);
+      add(canClimb ? 10 : 0, clmb); add(canJump ? 10 : 0, lp);
+      add(22, () => startRest(ts, 1800 + Math.random() * 4500));
     } else if (s === 'working') {
-      if (r < 0.28) startWalk(w);
-      else if (r < 0.44) startDash(w);
-      else if (r < 0.6) startHops(w, ts);
-      else if (r < 0.7) startFlipJump(ts);
-      else if (r < 0.8) startClimb(w);
-      else if (r < 0.9) startLeap(ts, w);
-      else startRest(ts, 250 + Math.random() * 800);
+      add(28, walk); add(16, dash); add(canJump ? 16 : 0, hops); add(canJump ? 10 : 0, flipJ);
+      add(canClimb ? 10 : 0, clmb); add(canJump ? 10 : 0, lp);
+      add(10, () => startRest(ts, 250 + Math.random() * 800));
     } else if (s === 'done') {
-      if (r < 0.3) startHops(w, ts);
-      else if (r < 0.55) startFlipJump(ts);
-      else if (r < 0.68) startClimb(w);
-      else if (r < 0.85) startLeap(ts, w);
-      else startWalk(w);
+      add(canJump ? 30 : 0, hops); add(canJump ? 25 : 0, flipJ); add(canClimb ? 13 : 0, clmb);
+      add(canJump ? 17 : 0, lp); add(15, walk); add(canJump ? 0 : 20, dash);
     } else {
-      if (r < 0.6) startWalk(w);
-      else startRest(ts, 300 + Math.random() * 600);
+      add(60, walk); add(40, () => startRest(ts, 300 + Math.random() * 600));
     }
+    let r = Math.random() * opts.reduce((a, o) => a + o[0], 0);
+    for (const [wt, fn] of opts) { r -= wt; if (r <= 0) { fn(); return; } }
+    opts[opts.length - 1][1]();
   }
 
-  function pickGhostTarget(w) {
-    targetX = 20 + Math.random() * Math.max(1, w - 116);
-    targetY = Math.random() * Math.min(maxApex(), 170);
+  function pickAirTarget(w) {
+    targetX = 20 + Math.random() * span(w);
+    targetY = Math.random() * Math.min(maxApex(), C.scale > 1 ? 220 : 170);
   }
 
   function setLimbs(ts) {
     const grounded = y <= 0.5 || activity === 'climb';
     let al = -walkA * 0.7, ar = walkA * 0.7;
-    let ll = walkA, lr = -walkA;
-    if (!grounded && !GHOST) {
+    let ll = walkA, lr = -walkA, gesture = false;
+    if (!grounded && !AIR) {
       ll = 24; lr = -24;                              // tuck legs in the air
       al = flip.active ? 140 : 35; ar = flip.active ? -140 : -35;
     }
     if (activity === 'leap' && !grounded) {
-      al = 170; ar = -170; ll = 8; lr = -8;           // reaching for the ceiling
+      al = 170; ar = -170; ll = 8; lr = -8; gesture = true;   // reaching for the ceiling
     } else if (activity === 'hang') {
       const k = Math.sin(bobT * 2.5) * 12;
-      al = 178; ar = -178; ll = k; lr = -k;           // holding on, legs dangling
+      al = 178; ar = -178; ll = k; lr = -k; gesture = true;   // holding on, legs dangling
     }
     if (ts < pointUntil) {
       ar = -92 + Math.sin(bobT * 3) * 4;              // arm out, pointing at you
       if (activity !== 'hang') al = 0;
+      gesture = true;
     } else if (data.state === 'waiting' && activity !== 'hang') {
       const f = Math.sin(bobT * 12) * 14;
-      al = 150 + f; ar = -150 - f;                    // both arms up, flailing
+      al = 150 + f; ar = -150 - f; gesture = true;    // both arms up, flailing
     } else if (ts < celebrateUntil) {
-      al = 160; ar = -160;                            // victory arms
+      al = 160; ar = -160; gesture = true;            // victory arms
     } else if (ts < wavingUntil) {
-      ar = -145 + Math.sin(bobT * 16) * 18;           // hello wave
+      ar = -145 + Math.sin(bobT * 16) * 18; gesture = true; // hello wave
     }
-    legl.setAttribute('transform', 'rotate(' + ll.toFixed(1) + ' -13 20)');
-    legr.setAttribute('transform', 'rotate(' + lr.toFixed(1) + ' 13 20)');
-    arml.setAttribute('transform', 'rotate(' + al.toFixed(1) + ' -29 2)');
-    armr.setAttribute('transform', 'rotate(' + ar.toFixed(1) + ' 29 2)');
+    const rot = (id, a, px, py) => $(id).setAttribute('transform', 'rotate(' + a.toFixed(1) + ' ' + px + ' ' + py + ')');
+    if (C.kind === 'biped') {
+      rot('legl', ll, -13, 20); rot('legr', lr, 13, 20);
+      rot('arml', al, -29, 2); rot('armr', ar, 29, 2);
+    } else if (C.kind === 'quad') {
+      // Front legs double as arms for gestures; otherwise a diagonal gait.
+      // Legs are drawn behind the body, so cap raised poses at ~125° — the
+      // paw tips then clear the body outline and stay visible.
+      const cap = (a) => Math.max(-125, Math.min(125, a));
+      const fl = gesture ? cap(al) : (grounded ? walkA : 20);
+      const fr = gesture ? cap(ar) : (grounded ? -walkA : -20);
+      const bl = grounded ? -walkA : 15, br = grounded ? walkA : -15;
+      rot('qfl', fl, -26, 18); rot('qfr', fr, 26, 18);
+      rot('qbl', bl, -10, 20); rot('qbr', br, 10, 20);
+    } else if (C.kind === 'flyer') {
+      if (C.flap) {
+        const a = Math.sin(bobT * C.flap * 6.283) * C.flapAmp + (moving ? 8 : 0);
+        if (C.wings === 'small') { rot('wingl', -a, -6, -10); rot('wingr', a, 6, -10); }
+        else { rot('dwingl', -a, -8, -6); rot('dwingr', a, 8, -6); }
+      }
+      if (C.arms) {
+        // Ghost arms: gentle float pose unless a gesture is active.
+        rot('arml', gesture ? al : 18 + Math.sin(bobT * 1.8) * 6, -29, 2);
+        rot('armr', gesture ? ar : -18 - Math.sin(bobT * 1.8) * 6, 29, 2);
+      }
+    }
   }
 
   function loop(ts) {
@@ -452,58 +555,59 @@
     const steps = dt / 16.7;
     const w = Math.max(120, stage.clientWidth);
     const speed = (data.state === 'working' ? 1.6 : data.state === 'done' ? 1.0 : data.state === 'idle' ? 0.35 : 0.5)
-      * walkMul * (activity === 'dash' ? 3.2 : 1);
+      * walkMul * (C.speed || 1) * (activity === 'dash' ? 3.2 : 1);
     const resting = ts < pauseUntil || ts < pointUntil;
     // Re-clamp targets to the current panel size — a resize mid-walk would
     // otherwise leave an unreachable target pinning the buddy to the wall.
-    targetX = Math.max(4, Math.min(targetX, w - 84));
-    targetY = Math.max(0, Math.min(targetY, Math.max(0, stage.clientHeight - 100)));
+    targetX = Math.max(4, Math.min(targetX, wallR(w)));
+    targetY = Math.max(0, Math.min(targetY, maxApex()));
 
-    if (GHOST) {
-      // The ghost owns the whole area: free 2D floating.
+    if (AIR) {
+      // Flyers own the whole area: free 2D flight. Bees zip and re-decide
+      // constantly; the dragon glides; the ghost drifts.
       moving = !reduced && !resting;
       if (moving) {
         const dx = targetX - x, dy2 = targetY - y;
-        if (Math.hypot(dx, dy2) < 6) {
-          if (Math.random() < 0.35) startRest(ts, 800 + Math.random() * 2500);
-          pickGhostTarget(w);
+        if (Math.hypot(dx, dy2) < 6 || Math.random() < (C.retarget || 0) * steps) {
+          if (Math.hypot(dx, dy2) < 6 && Math.random() < (C.restP || 0.3)) startRest(ts, 800 + Math.random() * 2500);
+          pickAirTarget(w);
         } else {
           if (Math.abs(dx) > 3) dir = dx > 0 ? 1 : -1;
-          const ease = Math.min(1, 0.02 * steps);
+          const ease = Math.min(1, (C.ease || 0.02) * steps);
           x += dx * ease; y += dy2 * ease;
         }
       }
     } else if (activity === 'climb' && climb) {
       // Wall climbing and upside-down ceiling crawling.
       moving = !reduced && !resting;
-      const ceilY = Math.max(20, stage.clientHeight - 95);
+      const ceilY = ceilH();
       if (moving) {
-        const cs = 0.9 * walkMul * steps;
+        const cs = 0.9 * walkMul * (C.climbSpeed || C.speed || 1) * steps;
         if (climb.phase === 'approach') {
           const step = speed * steps;
           if (Math.abs(targetX - x) <= step) { x = targetX; climb.phase = 'up'; }
           else { dir = targetX > x ? 1 : -1; x += dir * step; }
         } else if (climb.phase === 'up') {
           // Re-pin to the wall each frame — the panel may resize mid-climb.
-          x = targetX = climb.side < 0 ? 4 : w - 84;
+          x = targetX = climb.side < 0 ? 4 : wallR(w);
           y += cs;
           if (y >= ceilY) {
             y = ceilY; climb.phase = 'ceil';
-            climb.exitMode = Math.random() < 0.5 ? 'drop' : 'across';
+            climb.exitMode = (Math.random() < 0.5 && canJump) ? 'drop' : 'across';
             targetX = climb.exitMode === 'across'
-              ? (climb.side < 0 ? w - 84 : 4)
-              : 30 + Math.random() * Math.max(1, w - 140);
+              ? (climb.side < 0 ? wallR(w) : 4)
+              : 30 + Math.random() * Math.max(1, w - CH - 62);
           }
         } else if (climb.phase === 'ceil') {
           y = ceilY; // stay glued to the ceiling through resizes, both directions
-          const step = 0.8 * walkMul * steps;
+          const step = 0.8 * walkMul * (C.climbSpeed || C.speed || 1) * steps;
           if (Math.abs(targetX - x) <= step) {
             x = targetX;
             if (climb.exitMode === 'across') climb.phase = 'down';
             else { climb = null; activity = 'drop'; dropRoll = true; vy = 0; surfTarget = 360; } // let go!
           } else { dir = targetX > x ? 1 : -1; x += dir * step; }
         } else if (climb.phase === 'down') {
-          x = targetX = climb.side < 0 ? w - 84 : 4; // descending the opposite wall
+          x = targetX = climb.side < 0 ? wallR(w) : 4; // descending the opposite wall
           y -= cs;
           if (y <= 0) { y = 0; climb = null; surfTarget = 0; scheduleNext(ts); }
         }
@@ -518,13 +622,13 @@
       // Hanging from the ceiling by the hands, swinging. Then: pull up and
       // crawl away, or let go.
       moving = false;
-      y = Math.max(20, stage.clientHeight - 95);
+      y = ceilH();
       if (!resting && ts >= hangUntil) {
-        if (Math.random() < 0.55) {
+        if (Math.random() < 0.55 && canClimb) {
           const side = Math.random() < 0.5 ? -1 : 1;
           activity = 'climb';
           climb = { phase: 'ceil', side, exitMode: Math.random() < 0.5 ? 'drop' : 'across' };
-          targetX = climb.exitMode === 'across' ? (side < 0 ? w - 84 : 4) : 30 + Math.random() * Math.max(1, w - 140);
+          targetX = climb.exitMode === 'across' ? (side < 0 ? wallR(w) : 4) : 30 + Math.random() * Math.max(1, w - CH - 62);
         } else {
           activity = 'drop'; dropRoll = false; vy = 0;
         }
@@ -534,7 +638,7 @@
       // Leap: crouch briefly, then launch at the ceiling.
       if (activity === 'leap' && leap && leap.phase === 'crouch' && !resting && ts >= leap.until) {
         leap.phase = 'air';
-        const ceil = Math.max(20, stage.clientHeight - 95);
+        const ceil = ceilH();
         const apex = leap.success ? ceil + 8 : ceil * (0.55 + Math.random() * 0.35);
         jump(Math.sqrt(2 * GRAV * apex), false, ts);
       }
@@ -560,7 +664,7 @@
       if (y > 0 || vy > 0) {
         y += vy * steps;
         vy -= GRAV * steps;
-        const ceil = stage.clientHeight - 95;
+        const ceil = ceilH();
         if (activity === 'leap' && leap && leap.success && vy > 0 && y >= ceil - 3) {
           // Grabbed the ceiling!
           y = ceil; vy = 0; leap = null; activity = 'hang';
@@ -588,24 +692,27 @@
             }
           }
         }
-      } else if (!reduced && !resting && data.state === 'waiting' && activity !== 'leap' && Math.random() < 0.05 * steps) {
+      } else if (canJump && !reduced && !resting && data.state === 'waiting' && activity !== 'leap' && Math.random() < 0.05 * steps) {
         jump(4.5, false, ts);                         // urgent bouncing
       }
     }
     surfCur += (surfTarget - surfCur) * Math.min(1, 0.15 * steps);
+    // Flyers: keep inside the panel vertically through resizes.
+    if (AIR) y = Math.max(0, Math.min(y, maxApex()));
 
     // Walk cycle: legs step while walking on the floor OR crawling a surface.
-    const legsActive = !GHOST && moving && (y <= 0.5 || activity === 'climb');
-    walkA += ((legsActive ? Math.sin(bobT * 10) * (activity === 'climb' ? 18 : 26) : 0) - walkA) * Math.min(1, 0.25 * steps);
+    const legsActive = !AIR && moving && (y <= 0.5 || activity === 'climb');
+    const gait = C.kind === 'quad' ? 22 : 26;
+    walkA += ((legsActive ? Math.sin(bobT * (C.speed < 0.5 ? 5 : 10)) * (activity === 'climb' ? 18 : gait) : 0) - walkA) * Math.min(1, 0.25 * steps);
     setNap(data.state === 'idle' && ts < pauseUntil && ts >= pointUntil);
-    x = Math.max(4, Math.min(x, w - 84));
+    x = Math.max(4, Math.min(x, wallR(w)));
     char.style.left = x + 'px';
     applyTransform(ts);
     setLimbs(ts);
-    if (data.state === 'working' && Math.random() < 0.006 * steps) fx('⚙', 30);
-    if (activity === 'dash' && moving && Math.random() < 0.05 * steps) fx('💨', dir < 0 ? 62 : -22);
-    if (data.state === 'idle' && (ts < pauseUntil || reduced) && Math.random() < 0.01 * steps) fx('z', 34);
-    if (data.state === 'waiting' && Math.random() < 0.02 * steps) fx('!', 30);
+    if (data.state === 'working' && Math.random() < 0.006 * steps) fx('⚙', CH * 0.4);
+    if (activity === 'dash' && moving && Math.random() < 0.05 * steps) fx('💨', dir < 0 ? CH * 0.8 : -CH * 0.3);
+    if (data.state === 'idle' && (ts < pauseUntil || reduced) && Math.random() < 0.01 * steps) fx('z', CH * 0.45);
+    if (data.state === 'waiting' && Math.random() < 0.02 * steps) fx('!', CH * 0.4);
     requestAnimationFrame(loop);
   }
 

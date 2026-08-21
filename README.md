@@ -37,6 +37,12 @@ little character that mirrors Claude's state: paces while Claude works, hops and
 Claude needs you, sleeps when idle, celebrates on done, goes dizzy on errors. **Click it and
 it talks back** — real status, task progress, and token counts in speech bubbles.
 
+Nine built-in characters with different bodies and personalities: 🐹 Critter, 🤖 Robot,
+🐱 Cat (bipeds — climb walls, leap for the ceiling), 🐶 Pup and 🐢 Turtle (four legs; the
+turtle is small and very slow), 🐌 Snail (tiny, slowest, slowly crawls walls and ceiling),
+🐝 Bee (tiny, buzzing wings, zips around the whole panel), 🐉 Dragon (big, slow wingbeats,
+glides everywhere), 👻 Ghost (floats). Each has its own ceiling-leap success rate.
+
 **Use your own character:** run *Claude Pulse: Choose Buddy Character* and pick any image —
 PNG, JPG, WebP, SVG, or an animated GIF (`claudePulse.buddyImage` holds the path). The
 built-in critter is the fallback. VS Code has no floating-overlay surface, so the character
