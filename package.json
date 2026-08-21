@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "publisher": "warroom",
   "license": "MIT",
   "repository": {
@@ -105,7 +105,7 @@
           "type": "string",
           "enum": ["critter", "robot", "cat", "pup", "turtle", "snail", "bee", "dragon", "ghost"],
           "default": "critter",
-          "description": "Which built-in buddy character to show (ignored when buddyImage is set). Bipeds: critter, robot, cat. Four-legged: pup, turtle. Slow: turtle, snail. Flyers: bee (small), dragon (big), ghost."
+          "description": "Which built-in buddy character to show (ignored when buddyImage is set). Bipeds: critter, robot. Four-legged: cat, pup, turtle. Slow: turtle, snail. Flyers: bee (small), dragon (big), ghost."
         },
         "claudePulse.buddyImage": {
           "type": "string",
