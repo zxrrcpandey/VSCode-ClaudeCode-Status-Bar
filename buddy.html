@@ -259,7 +259,7 @@
     el.className = 'fx';
     el.textContent = txt;
     el.style.left = (x + 22 + (dx || 0)) + 'px';
-    el.style.bottom = '88px';
+    el.style.bottom = (88 + y) + 'px';   // follow the buddy up walls/ceiling
     stage.appendChild(el);
     setTimeout(() => el.remove(), 1700);
   }
@@ -298,7 +298,9 @@
     const bob = (grounded && !GHOST) ? Math.sin(bobT * 2.2) * -2.5 : Math.sin(bobT * 1.8) * -3;
     let rot = 0;
     const onSurface = Math.abs(surfCur) > 1 || surfTarget !== 0;
-    if (onSurface) {
+    if (activity === 'hang') {
+      rot = Math.sin(bobT * 2) * 7;                   // pendulum from the hands
+    } else if (onSurface) {
       // Climbing a wall or crawling the ceiling — orientation follows the surface.
       rot = surfCur + (activity === 'climb' && moving ? Math.sin(bobT * 9) * 4 : 0);
     } else if (flip.active) {
@@ -312,7 +314,8 @@
       rot = activity === 'dash' ? 10 * dir : Math.sin(bobT * 9) * 6;
     }
     squish += (1 - squish) * 0.18;
-    char.style.transformOrigin = (activity === 'flip' || onSurface || !grounded) ? '50% 50%' : '50% 100%';
+    char.style.transformOrigin = activity === 'hang' ? '50% 0%'
+      : (activity === 'flip' || onSurface || !grounded) ? '50% 50%' : '50% 100%';
     char.style.transform =
       'translateY(' + (bob - y).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
       ' scaleX(' + (dir * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
@@ -321,7 +324,11 @@
   let lastTs = 0, pauseUntil = 0, walkMul = 1, walkA = 0;
   let targetY = 0, activity = 'walk', hopsLeft = 0;
   let climb = null, surfCur = 0, surfTarget = 0;
+  let leap = null, hangUntil = 0, dropRoll = false;
   const GRAV = 0.5; // px per frame², frame = 16.7ms
+  // How good each character is at leaping up to grab the ceiling.
+  const LEAP_SKILL = { cat: 0.85, critter: 0.55, robot: 0.3, ghost: 0 };
+  const leapSkill = imgMode ? 0.5 : (LEAP_SKILL[CHARACTER] !== undefined ? LEAP_SKILL[CHARACTER] : 0.55);
 
   // Mostly short random hops, sometimes a long walk — with a fresh pace each
   // time, so the wandering doesn't read as edge-to-edge ping-pong.
@@ -361,6 +368,13 @@
     climb = { phase: 'approach', side };
     targetX = side < 0 ? 4 : w - 84;
   }
+  // Crouch, then leap for the ceiling. Success is decided up front by the
+  // character's skill; a miss peaks visibly short and tumbles back down.
+  function startLeap(ts, w) {
+    if (stage.clientHeight - 95 < 30) { startWalk(w); return; }
+    activity = 'leap'; targetX = x; squish = 0.8;
+    leap = { phase: 'crouch', until: ts + 350, success: Math.random() < leapSkill };
+  }
 
   // What to do next, weighted by Claude's state — energetic while working,
   // acrobatic when done, lazy when idle.
@@ -368,22 +382,25 @@
     const w = Math.max(120, stage.clientWidth);
     const s = data.state, r = Math.random();
     if (s === 'idle') {
-      if (r < 0.45) startWalk(w);
-      else if (r < 0.57) startHops(w, ts);
-      else if (r < 0.63) startFlipJump(ts);
-      else if (r < 0.75) startClimb(w);
+      if (r < 0.4) startWalk(w);
+      else if (r < 0.52) startHops(w, ts);
+      else if (r < 0.58) startFlipJump(ts);
+      else if (r < 0.68) startClimb(w);
+      else if (r < 0.78) startLeap(ts, w);
       else startRest(ts, 1800 + Math.random() * 4500);
     } else if (s === 'working') {
-      if (r < 0.3) startWalk(w);
-      else if (r < 0.48) startDash(w);
-      else if (r < 0.66) startHops(w, ts);
-      else if (r < 0.78) startFlipJump(ts);
-      else if (r < 0.9) startClimb(w);
+      if (r < 0.28) startWalk(w);
+      else if (r < 0.44) startDash(w);
+      else if (r < 0.6) startHops(w, ts);
+      else if (r < 0.7) startFlipJump(ts);
+      else if (r < 0.8) startClimb(w);
+      else if (r < 0.9) startLeap(ts, w);
       else startRest(ts, 250 + Math.random() * 800);
     } else if (s === 'done') {
-      if (r < 0.35) startHops(w, ts);
-      else if (r < 0.65) startFlipJump(ts);
-      else if (r < 0.8) startClimb(w);
+      if (r < 0.3) startHops(w, ts);
+      else if (r < 0.55) startFlipJump(ts);
+      else if (r < 0.68) startClimb(w);
+      else if (r < 0.85) startLeap(ts, w);
       else startWalk(w);
     } else {
       if (r < 0.6) startWalk(w);
@@ -404,10 +421,16 @@
       ll = 24; lr = -24;                              // tuck legs in the air
       al = flip.active ? 140 : 35; ar = flip.active ? -140 : -35;
     }
+    if (activity === 'leap' && !grounded) {
+      al = 170; ar = -170; ll = 8; lr = -8;           // reaching for the ceiling
+    } else if (activity === 'hang') {
+      const k = Math.sin(bobT * 2.5) * 12;
+      al = 178; ar = -178; ll = k; lr = -k;           // holding on, legs dangling
+    }
     if (ts < pointUntil) {
       ar = -92 + Math.sin(bobT * 3) * 4;              // arm out, pointing at you
-      al = 0;
-    } else if (data.state === 'waiting') {
+      if (activity !== 'hang') al = 0;
+    } else if (data.state === 'waiting' && activity !== 'hang') {
       const f = Math.sin(bobT * 12) * 14;
       al = 150 + f; ar = -150 - f;                    // both arms up, flailing
     } else if (ts < celebrateUntil) {
@@ -477,7 +500,7 @@
           if (Math.abs(targetX - x) <= step) {
             x = targetX;
             if (climb.exitMode === 'across') climb.phase = 'down';
-            else { climb = null; activity = 'drop'; vy = 0; surfTarget = 360; } // let go!
+            else { climb = null; activity = 'drop'; dropRoll = true; vy = 0; surfTarget = 360; } // let go!
           } else { dir = targetX > x ? 1 : -1; x += dir * step; }
         } else if (climb.phase === 'down') {
           x = targetX = climb.side < 0 ? w - 84 : 4; // descending the opposite wall
@@ -491,8 +514,30 @@
           : climb.phase === 'down' ? (climb.side < 0 ? -90 : 90)
           : 0;
       }
+    } else if (activity === 'hang') {
+      // Hanging from the ceiling by the hands, swinging. Then: pull up and
+      // crawl away, or let go.
+      moving = false;
+      y = Math.max(20, stage.clientHeight - 95);
+      if (!resting && ts >= hangUntil) {
+        if (Math.random() < 0.55) {
+          const side = Math.random() < 0.5 ? -1 : 1;
+          activity = 'climb';
+          climb = { phase: 'ceil', side, exitMode: Math.random() < 0.5 ? 'drop' : 'across' };
+          targetX = climb.exitMode === 'across' ? (side < 0 ? w - 84 : 4) : 30 + Math.random() * Math.max(1, w - 140);
+        } else {
+          activity = 'drop'; dropRoll = false; vy = 0;
+        }
+      }
     } else {
-      moving = !reduced && !resting && Math.abs(targetX - x) > 0.5 && activity !== 'flip' && activity !== 'drop';
+      moving = !reduced && !resting && Math.abs(targetX - x) > 0.5 && activity !== 'flip' && activity !== 'drop' && activity !== 'leap';
+      // Leap: crouch briefly, then launch at the ceiling.
+      if (activity === 'leap' && leap && leap.phase === 'crouch' && !resting && ts >= leap.until) {
+        leap.phase = 'air';
+        const ceil = Math.max(20, stage.clientHeight - 95);
+        const apex = leap.success ? ceil + 8 : ceil * (0.55 + Math.random() * 0.35);
+        jump(Math.sqrt(2 * GRAV * apex), false, ts);
+      }
       if (moving) {
         const step = speed * steps;
         if (Math.abs(targetX - x) <= step) {
@@ -506,7 +551,7 @@
         }
       } else if (resting) {
         if (data.state === 'idle' && Math.random() < 0.006 * steps) dir = -dir; // glance around
-      } else if (!reduced && y <= 0.5 && vy <= 0 && activity !== 'flip' && activity !== 'drop') {
+      } else if (!reduced && y <= 0.5 && vy <= 0 && activity !== 'flip' && activity !== 'drop' && activity !== 'leap') {
         // Rest expired (or a degenerate target) with nothing queued — the
         // scheduler must run again or the buddy freezes here forever.
         scheduleNext(ts);
@@ -516,20 +561,34 @@
         y += vy * steps;
         vy -= GRAV * steps;
         const ceil = stage.clientHeight - 95;
-        if (y > ceil) { y = ceil; vy = Math.min(vy, 0); }
-        if (y <= 0) {
-          y = 0; vy = 0; squish = 0.78; flip.active = false;
-          if (activity === 'hops') {
-            if (hopsLeft > 0) { hopsLeft--; jump(3 + Math.random() * 1.5, false, ts); }
-            else scheduleNext(ts);
-          } else if (activity === 'flip' || activity === 'drop') {
-            // Normalize the leftover roll so it eases the last few degrees to 0
-            // in the same spin direction — short falls would otherwise pop.
-            if (activity === 'drop') { surfCur -= 360; surfTarget = 0; }
-            scheduleNext(ts);
+        if (activity === 'leap' && leap && leap.success && vy > 0 && y >= ceil - 3) {
+          // Grabbed the ceiling!
+          y = ceil; vy = 0; leap = null; activity = 'hang';
+          hangUntil = ts + 2000 + Math.random() * 3000;
+          lastFx = 0; fx('✨', 30);
+          if (Math.random() < 0.35) say(pick(['Nailed it! 💪', 'Look at me go!', 'Ceiling: conquered.']), 2500);
+        } else {
+          if (y > ceil) { y = ceil; vy = Math.min(vy, 0); }
+          if (y <= 0) {
+            y = 0; vy = 0; squish = 0.78; flip.active = false;
+            if (activity === 'hops') {
+              if (hopsLeft > 0) { hopsLeft--; jump(3 + Math.random() * 1.5, false, ts); }
+              else scheduleNext(ts);
+            } else if (activity === 'leap' && leap && leap.phase === 'air') {
+              // Missed — tumble, see stars, dust off.
+              leap = null; squish = 0.62; lastFx = 0; fx('💫', 30);
+              if (Math.random() < 0.4) say(pick(['So close!', 'Gravity: 1, me: 0.', 'I meant to do that.', 'Next time, ceiling.']), 2500);
+              startRest(ts, 1200 + Math.random() * 800);
+            } else if (activity === 'flip' || activity === 'drop') {
+              // Normalize the leftover roll so it eases the last few degrees to 0
+              // in the same spin direction — short falls would otherwise pop.
+              if (activity === 'drop' && dropRoll) surfCur -= 360;
+              surfTarget = 0; dropRoll = false;
+              scheduleNext(ts);
+            }
           }
         }
-      } else if (!reduced && !resting && data.state === 'waiting' && Math.random() < 0.05 * steps) {
+      } else if (!reduced && !resting && data.state === 'waiting' && activity !== 'leap' && Math.random() < 0.05 * steps) {
         jump(4.5, false, ts);                         // urgent bouncing
       }
     }
