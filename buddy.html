@@ -136,14 +136,18 @@
       </g>
       <g id="body-bee" style="display:none">
         <path d="M -28 4 L -40 6 L -28 9 Z" fill="#2b2b2b"/>
+        <g id="beelegs">
+          <rect x="-12" y="18" width="4" height="9" rx="2" fill="#2b2b2b"/>
+          <rect x="-2" y="19" width="4" height="9" rx="2" fill="#2b2b2b"/>
+          <rect x="8" y="17" width="4" height="9" rx="2" fill="#2b2b2b"/>
+        </g>
         <ellipse cx="-4" cy="4" rx="24" ry="17" fill="#f2c94c"/>
         <ellipse cx="-8" cy="4" rx="4" ry="17" fill="#2b2b2b"/>
         <ellipse cx="-20" cy="4" rx="3" ry="14" fill="#2b2b2b"/>
+        <ellipse cx="-12" cy="-6" rx="6" ry="3" fill="#ffffff" fill-opacity=".35"/>
+        <g id="antF"><line x1="20" y1="-14" x2="24" y2="-30" stroke="#2b2b2b" stroke-width="2"/><circle cx="24" cy="-31" r="2.5" fill="#2b2b2b"/></g>
         <circle cx="22" cy="-2" r="13" fill="#f2c94c"/>
-        <line x1="26" y1="-14" x2="34" y2="-28" stroke="#2b2b2b" stroke-width="2"/>
-        <circle cx="34" cy="-29" r="2.5" fill="#2b2b2b"/>
-        <rect x="-12" y="18" width="4" height="8" rx="2" fill="#2b2b2b"/>
-        <rect x="0" y="19" width="4" height="8" rx="2" fill="#2b2b2b"/>
+        <g id="antN"><line x1="26" y1="-14" x2="34" y2="-28" stroke="#2b2b2b" stroke-width="2"/><circle cx="34" cy="-29" r="2.5" fill="#2b2b2b"/></g>
       </g>
       <g id="body-dragon" style="display:none">
         <path d="M -34 10 Q -56 6 -50 -14" stroke="#5fa86f" stroke-width="8" fill="none" stroke-linecap="round"/>
@@ -230,7 +234,7 @@
     pup:     { kind: 'quad',   scale: 1,    speed: 1.25, leap: 0.6,  climb: true,  jumps: true,  limb: '#a9764f', face: [22, -9, 0.85] },
     turtle:  { kind: 'quad',   scale: 0.8,  speed: 0.3,  leap: 0.05, climb: false, jumps: true,  limb: '#8fb072', face: [40, 4, 0.6] },
     snail:   { kind: 'slider', scale: 0.55, speed: 0.2,  leap: 0,    climb: true,  jumps: false, climbSpeed: 0.35, face: [30, 8, 0.72] },
-    bee:     { kind: 'flyer',  scale: 0.5,  ease: 0.06,  retarget: 0.02,  restP: 0.12, flap: 9,   flapAmp: 32, bobAmp: 4, wings: 'small', face: [22, -2, 0.75] },
+    bee:     { kind: 'flyer',  scale: 0.7,  ease: 0.06,  retarget: 0.02,  restP: 0.2,  flap: 9,   flapAmp: 32, bobAmp: 4, wings: 'small', face: [22, -2, 0.85], tricks: true },
     dragon:  { kind: 'flyer',  scale: 1.5,  ease: 0.012, retarget: 0.002, restP: 0.4,  flap: 0.9, flapAmp: 18, bobAmp: 5, wings: 'big',   face: [34, -26, 0.8] },
     ghost:   { kind: 'flyer',  scale: 1,    ease: 0.02,  retarget: 0,     restP: 0.35, flap: 0,   flapAmp: 0,  bobAmp: 3, wings: 'none', arms: true, limb: '#c6d1e4', face: [4, -4, 1] },
   };
@@ -347,11 +351,16 @@
     const now = performance.now();
     pointUntil = now + 2600;   // stop and point at you
     pauseUntil = now + 2600;
+    if (AIR && C.tricks) {
+      // Happy loop-de-loop with a burst of hearts.
+      if (!reduced) flip = { active: true, start: now, dur: 700, turns: 1 };
+      for (let i = 0; i < 3; i++) setTimeout(() => { lastFx = 0; fx('💛', i * 12 - 12); }, i * 160);
+    }
     say(cheer() + '<span class="sub">' + pick(lines()) + '</span>', 6500);
     vscode.postMessage({ type: 'poke' });
   });
 
-  function fx(txt, dx) {
+  function fx(txt, dx, bottomPx) {
     const now = Date.now();
     if (now - lastFx < 900) return;
     lastFx = now;
@@ -359,7 +368,8 @@
     el.className = 'fx';
     el.textContent = txt;
     el.style.left = (x + CH * 0.28 + (dx || 0)) + 'px';
-    el.style.bottom = (CH + 10 + y) + 'px';   // follow the buddy up walls/ceiling
+    // Default: above the buddy's head (follows it up walls/ceiling).
+    el.style.bottom = (bottomPx !== undefined ? bottomPx : CH + 10 + y) + 'px';
     stage.appendChild(el);
     setTimeout(() => el.remove(), 1700);
   }
@@ -411,9 +421,10 @@
     } else if (moving) {
       rot = AIR ? dir * 4 : activity === 'dash' ? 10 * dir : Math.sin(bobT * 9) * (C.kind === 'slider' ? 2 : 6);
     }
+    if (AIR && airMode === 'waggle') rot += Math.sin(bobT * 14) * 14;   // dance wobble
     squish += (1 - squish) * 0.18;
     char.style.transformOrigin = activity === 'hang' ? '50% 0%'
-      : (activity === 'flip' || onSurface || !grounded) ? '50% 50%' : '50% 100%';
+      : (activity === 'flip' || flip.active || onSurface || !grounded) ? '50% 50%' : '50% 100%';
     char.style.transform =
       'translateY(' + (bob - y).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
       ' scaleX(' + (dir * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
@@ -423,6 +434,7 @@
   let targetY = 0, activity = 'walk', hopsLeft = 0;
   let climb = null, surfCur = 0, surfTarget = 0;
   let leap = null, hangUntil = 0, dropRoll = false;
+  let airMode = 'fly', airPlan = null;   // flyers: fly | hover | waggle | flower | nap
   const GRAV = 0.5; // px per frame², frame = 16.7ms
   const canJump = C.jumps !== false, canClimb = C.climb !== false;
   const leapSkill = C.leap || 0;
@@ -547,13 +559,20 @@
       rot('qbn', bn, -12, 24); rot('qbf', bf, -18, 24);
     } else if (C.kind === 'flyer') {
       if (C.flap) {
-        const a = Math.sin(bobT * C.flap * 6.283) * C.flapAmp + (moving ? 8 : 0);
+        // Wings fold while napping on the floor.
+        const a = airMode === 'nap' ? 0 : Math.sin(bobT * C.flap * 6.283) * C.flapAmp + (moving ? 8 : 0);
         if (C.wings === 'small') { rot('wingN', a, 0, -12); rot('wingF', -a * 0.8, 0, -12); }
         else { rot('dwingN', a, -6, -4); rot('dwingF', -a * 0.8, -10, -2); }
       }
       if (C.arms) {
         // Ghost arm: gentle float pose unless a gesture is active.
         rot('armN', gesture ? ar : -18 - Math.sin(bobT * 1.8) * 6, 16, 4);
+      }
+      if (charKey === 'bee' && !imgMode) {
+        // Antennae bob, legs dangle and kick while flying.
+        rot('antN', Math.sin(bobT * 3) * 8, 26, -14);
+        rot('antF', Math.sin(bobT * 3 + 1) * 8, 20, -14);
+        rot('beelegs', (moving ? Math.sin(bobT * 7) * 12 : Math.sin(bobT * 2) * 4), -2, 18);
       }
     }
   }
@@ -577,17 +596,41 @@
       // Flyers own the whole area: free 2D flight. Bees zip and re-decide
       // constantly; the dragon glides; the ghost drifts.
       moving = !reduced && !resting;
+      if (!resting && airMode !== 'fly') airMode = 'fly';
       if (moving) {
         const dx = targetX - x, dy2 = targetY - y;
-        if (Math.hypot(dx, dy2) < 6 || Math.random() < (C.retarget || 0) * steps) {
-          if (Math.hypot(dx, dy2) < 6 && Math.random() < (C.restP || 0.3)) startRest(ts, 800 + Math.random() * 2500);
-          pickAirTarget(w);
+        const arrived = Math.hypot(dx, dy2) < 6;
+        if (arrived || (!airPlan && Math.random() < (C.retarget || 0) * steps)) {
+          if (arrived && airPlan === 'flower') {
+            // Found a flower: hover over it for a bit, shedding hearts.
+            lastFx = 0; fx('🌼', CH * 0.15, 12);   // on the floor, under the bee
+            airMode = 'flower'; airPlan = null;
+            startRest(ts, 1500 + Math.random() * 2000);
+          } else if (arrived && airPlan === 'nap') {
+            airMode = 'nap'; airPlan = null;
+            startRest(ts, 2500 + Math.random() * 4000);
+          } else if (arrived && Math.random() < (C.restP || 0.3)) {
+            if (C.tricks && Math.random() < 0.5) { airMode = 'waggle'; startRest(ts, 1200 + Math.random() * 1500); }
+            else { airMode = 'hover'; startRest(ts, 800 + Math.random() * 2500); }
+          } else if (C.tricks && Math.random() < 0.3) {
+            // Plan something cute: land for a nap when idle, or visit a flower.
+            if (data.state === 'idle' && Math.random() < 0.5) { airPlan = 'nap'; targetY = 0; }
+            else { airPlan = 'flower'; targetY = 3; }
+            targetX = 20 + Math.random() * span(w);
+          } else {
+            pickAirTarget(w);
+          }
         } else {
           if (Math.abs(dx) > 3) dir = dx > 0 ? 1 : -1;
           const ease = Math.min(1, (C.ease || 0.02) * steps);
           x += dx * ease; y += dy2 * ease;
+          // Loop-de-loop mid-flight.
+          if (C.tricks && !flip.active && Math.random() < 0.004 * steps) flip = { active: true, start: ts, dur: 650, turns: 1 };
+          if (C.tricks && Math.random() < 0.008 * steps) fx('bzz', -CH * 0.25);
         }
       }
+      if (airMode === 'waggle' && resting) x += Math.sin(bobT * 14) * 1.2 * steps;   // the waggle dance
+      if (airMode === 'flower' && resting && Math.random() < 0.02 * steps) fx('💛', CH * 0.3);
     } else if (activity === 'climb' && climb) {
       // Wall climbing and upside-down ceiling crawling.
       moving = !reduced && !resting;

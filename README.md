@@ -69,7 +69,8 @@ node scripts/install-hooks.js
 #    a) folder copy:
 mkdir -p ~/.vscode/extensions/warroom.claude-pulse-0.1.0
 cp package.json extension.js ~/.vscode/extensions/warroom.claude-pulse-0.1.0/
-#    b) or package a .vsix:  npx @vscode/vsce package  → code --install-extension *.vsix
+#    b) or build a .vsix (no vsce needed, works on Node 18):
+#       node scripts/build-vsix.js && code --install-extension claude-pulse-*.vsix
 
 # 3. Fully restart VS Code, then start a NEW Claude Code session
 ```
