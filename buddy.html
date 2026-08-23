@@ -301,6 +301,11 @@
         ? ['<b>' + d.todos.done + '/' + d.todos.total + '</b> steps done — ' + esc(d.todos.active || 'on it') + '.', 'Progress report: <b>' + d.todos.done + '/' + d.todos.total + '</b>. I supervised every one.']
         : ['Claude is on it — <b>' + fmt(d.elapsedMs || 0) + '</b> in.' + (d.tool ? ' Currently: <b>' + esc(d.tool) + '</b>.' : ''), 'Hard at work for <b>' + fmt(d.elapsedMs || 0) + '</b>. I am also working (pacing).'];
       if (d.tokensSession) base.push('This session: <b>' + tok(d.tokensSession) + '</b> tokens out so far.');
+      if (d.agents && d.agents.length) {
+        const n = d.agents.length;
+        const names = d.agents.slice(0, 3).map((a) => esc(a.desc || a.type)).join(', ');
+        base.unshift('Claude has <b>' + n + (n === 1 ? ' helper' : ' helpers') + '</b> on it: ' + names + (n > 3 ? '…' : '') + '.');
+      }
       return base;
     }
     if (d.state === 'done') {

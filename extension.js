@@ -112,6 +112,9 @@ function postBuddy(s, st, now) {
     totalMs: s.started_at && s.ended_at ? s.ended_at - s.started_at : 0,
     tokensSession: sessTok,
     tokensToday: todayTok,
+    agents: runningAgents(s, now).slice(0, 8).map((a) => ({
+      type: a.type, desc: a.desc, tools: a.tools || 0, elapsedMs: now - (a.started_at || now),
+    })),
   };
   if (buddy) buddy.post(lastBuddyData);
 }
@@ -261,6 +264,22 @@ function pick(list, t, now) {
   return best;
 }
 
+// Subagents currently running for a session (activity within the last 15 min).
+function runningAgents(s, now) {
+  const list = Object.values((s && s.agents) || {});
+  return list
+    .filter((a) => a && a.state === 'running' && now - (a.last_seen || a.started_at || 0) < 15 * 60 * 1000)
+    .sort((a, b) => (a.started_at || 0) - (b.started_at || 0));
+}
+function recentDoneAgents(s, now) {
+  return Object.values((s && s.agents) || {})
+    .filter((a) => a && a.state === 'done' && now - (a.ended_at || 0) < 60 * 1000);
+}
+function agentLabel(a) {
+  const d = a.desc ? a.desc : '(' + a.type + ' task)';
+  return d.length > 48 ? d.slice(0, 47) + '…' : d;
+}
+
 function taskBar(done, total) {
   if (total <= 12) return '▰'.repeat(done) + '▱'.repeat(total - done);
   const filled = Math.round((done / total) * 10);
@@ -314,6 +333,8 @@ function render() {
       const tot = usageRows(usageData.bySession[s.session_id]).reduce((a, r) => a + r.out, 0);
       if (tot) item.text += ' · ' + fmtTok(tot);
     }
+    const nAgents = runningAgents(s, now).length;
+    if (nAgents) item.text += ' · ' + nAgents + (nAgents === 1 ? ' agent' : ' agents');
   } else if (st === 'error') {
     item.text = '$(warning) Claude · error' + suffix;
     item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
@@ -344,6 +365,20 @@ function render() {
       if (x.tool) line += ' · ' + x.tool;
     }
     tip.appendMarkdown(line + '\n');
+    const agents = runningAgents(x, now);
+    if (agents.length) {
+      tip.appendMarkdown('  - **' + agents.length + (agents.length === 1 ? ' agent' : ' agents') + ' working**\n');
+      for (const a of agents.slice(0, 8)) {
+        let al = '    - `' + a.type + '` ' + agentLabel(a) + ' · ' + fmt(now - (a.started_at || now));
+        if (a.todos && a.todos.total) al += ' · ' + a.todos.done + '/' + a.todos.total;
+        else if (a.tools) al += ' · ' + a.tools + ' tool' + (a.tools === 1 ? '' : 's');
+        if (a.tool) al += ' · ' + a.tool;
+        tip.appendMarkdown(al + '\n');
+      }
+      if (agents.length > 8) tip.appendMarkdown('    - …and ' + (agents.length - 8) + ' more\n');
+    }
+    const finished = recentDoneAgents(x, now);
+    if (finished.length) tip.appendMarkdown('  - ' + finished.length + ' agent' + (finished.length === 1 ? '' : 's') + ' just finished\n');
   }
   if (usageData) {
     tip.appendMarkdown('\n---\n');
@@ -422,14 +457,27 @@ function activate(context) {
         return;
       }
       const icons = { waiting: '$(bell)', working: '$(loading~spin)', error: '$(warning)', done: '$(check)', idle: '$(sparkle)' };
-      const picks = sessions.map((x) => {
+      const picks = [];
+      for (const x of sessions) {
         const e = effectiveState(x, t, now);
-        return {
+        const agents = runningAgents(x, now);
+        picks.push({
           label: icons[e] + ' ' + (x.cwd ? path.basename(x.cwd) : (x.session_id || '?').slice(0, 8)),
-          description: e + (x.tool && e === 'working' ? ' · ' + x.tool : ''),
+          description: e + (x.tool && e === 'working' ? ' · ' + x.tool : '') +
+            (agents.length ? ' · ' + agents.length + ' agent' + (agents.length === 1 ? '' : 's') : ''),
           detail: x.cwd || undefined,
-        };
-      });
+        });
+        for (const a of agents) {
+          let d = fmt(now - (a.started_at || now));
+          if (a.todos && a.todos.total) d += ' · ' + a.todos.done + '/' + a.todos.total + ' steps';
+          else if (a.tools) d += ' · ' + a.tools + ' tool' + (a.tools === 1 ? '' : 's');
+          if (a.tool) d += ' · now: ' + a.tool;
+          picks.push({ label: '    $(hubot) ' + a.type + ' — ' + agentLabel(a), description: d });
+        }
+        for (const a of recentDoneAgents(x, now)) {
+          picks.push({ label: '    $(check) ' + a.type + ' — ' + agentLabel(a), description: 'finished' });
+        }
+      }
       picks.push({ label: '$(graph) Token usage report', description: 'session · today · last 7 days, by model', usage: true });
       picks.push({ label: '$(trash) Reset all session states', description: 'clear stuck indicators', reset: true });
       const chosen = await vscode.window.showQuickPick(picks, { placeHolder: 'Claude Code sessions' });

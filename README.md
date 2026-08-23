@@ -14,6 +14,17 @@ A tiny VS Code status bar indicator that always tells you what Claude Code is do
 **100% local, zero cost.** The hooks run a small local Node script; the extension watches a
 state file. No API calls, no tokens, no network.
 
+## Subagents
+
+When Claude spawns subagents (the Agent tool, workflows, parallel reviewers), the indicator
+shows **how many are running** — `⟳ Claude · working 4:46 · 3 agents` — and the tooltip /
+session picker list each one with its **task description, type, elapsed time, tool count,
+current tool**, and its own checklist progress if it keeps one. The data comes from hooks:
+the `Agent` tool call carries the task description, and every tool event from inside a
+subagent carries its `agent_id`. Parallel agents write state concurrently, so the hook uses
+a lock file around each update. Set `touch ~/.claude/claude-pulse/debug` to log raw hook
+payloads to `~/.claude/claude-pulse/events.log` when investigating.
+
 ## Token usage
 
 Pulse also reports **exact token usage by model**, computed locally from Claude Code's own

@@ -31,6 +31,10 @@ const EVENTS = [
   'Notification',
   'Stop',
   'StopFailure',
+  'SubagentStart',
+  'SubagentStop',
+  'TaskCreated',
+  'TaskCompleted',
   'SessionEnd',
 ];
 
