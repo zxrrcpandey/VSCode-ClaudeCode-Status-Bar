@@ -229,10 +229,15 @@ function getTimings() {
   const cfg = vscode.workspace.getConfiguration('claudePulse');
   const doneRaw = cfg.get('doneDisplaySeconds');
   const waitRaw = cfg.get('waitingTimeoutSeconds');
+  const provRaw = cfg.get('provisionalWaitSeconds');
   return {
     doneFadeMs: (typeof doneRaw === 'number' && doneRaw >= 0 ? doneRaw : 15) * 1000,
     // <= 0 disables the downgrade (waiting shows until an event clears it)
     waitTimeoutMs: typeof waitRaw === 'number' && waitRaw > 0 ? waitRaw * 1000 : Infinity,
+    // Unconfirmed permission waits: 0 = never show them (default). Claude Code
+    // fires PermissionRequest for auto-approved calls too, so only a confirmed
+    // signal is trustworthy; raise this if your setup never fires Notification.
+    provisionalMs: typeof provRaw === 'number' && provRaw > 0 ? provRaw * 1000 : Infinity,
     showElapsed: cfg.get('showElapsed') !== false,
     showTokens: cfg.get('showTokens') !== false,
   };
@@ -241,12 +246,17 @@ function getTimings() {
 function effectiveState(s, t, now) {
   if ((s.state === 'done' || s.state === 'error') &&
       now - (s.ended_at || s.updated_at || 0) > t.doneFadeMs) return 'idle';
-  // Claude Code fires no event when a permission is APPROVED — the next event is
-  // PostToolUse when the tool finishes. The open dialog re-asserts 'waiting'
-  // (Notification at ~6s), so a waiting-permission state that hasn't been
-  // refreshed recently most likely means the tool is already running.
-  if (s.state === 'waiting' && s.reason === 'permission' &&
-      now - (s.updated_at || 0) > t.waitTimeoutMs) return 'working';
+  if (s.state === 'waiting') {
+    // Age the wait from when it STARTED. Using updated_at let unrelated
+    // traffic (parallel subagents) refresh it forever, pinning the item
+    // yellow. Also: a bare PermissionRequest is not proof you are needed —
+    // it fires for auto-approved calls — so unconfirmed waits stay quiet
+    // unless provisionalWaitSeconds says otherwise.
+    const age = now - (s.waiting_since || s.updated_at || 0);
+    if (!s.waiting_confirmed && age < t.provisionalMs) return 'working';
+    if (age > t.waitTimeoutMs) return 'working';   // no event marks approval
+    return 'waiting';
+  }
   return s.state;
 }
 

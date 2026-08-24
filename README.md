@@ -104,15 +104,21 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   (run `/hooks` inside Claude Code to verify they loaded). Sessions are matched to a window
   by every directory they have reported, so a session whose shell `cd`s elsewhere stays
   attached to the workspace it started in.
-- **"Needs input" never shows (extension panel)** — there are open Claude Code bugs where the
-  `Notification` hook doesn't fire in the VS Code panel. Claude Pulse also listens to
-  `PermissionRequest` as a fallback, which covers permission prompts.
+- **"Needs input" never shows** — only *confirmed* prompts turn the indicator yellow: an
+  unanswered dialog (Claude Code's `Notification` at ~6 s), a question (`AskUserQuestion`,
+  `ExitPlanMode`), or an agent asking for input. A bare `PermissionRequest` is deliberately
+  ignored, because Claude Code fires it for **auto-approved** calls too — in `acceptEdits`
+  mode that is many times per minute, which used to pin the item yellow permanently. If your
+  setup never fires the confirming `Notification`, set `claudePulse.provisionalWaitSeconds`
+  to e.g. `8` to show unconfirmed permission requests after that many seconds.
 - **"Needs input" flips back to working while the dialog is still open** — Claude Code fires
-  no event at the moment you approve a permission (the next event is only when the tool
-  finishes), so Claude Pulse assumes an un-refreshed waiting state older than
-  `claudePulse.waitingTimeoutSeconds` (default 25 s) means you already approved. If you often
-  leave permission dialogs open for a long time, raise the setting, or set it to 0 to always
-  keep the yellow state until an event clears it.
+  no event at the moment you approve a permission (the next one comes only when the tool
+  finishes), so a wait older than `claudePulse.waitingTimeoutSeconds` (default 180 s) is
+  assumed answered. Set it to 0 to keep the yellow state until an event clears it.
+- **"Needs input" stuck on while Claude is clearly working** — fixed in 0.10.1: subagent
+  permission events no longer mark the *main* session as waiting, and a wait is now aged from
+  when it started rather than from the last event of any kind (parallel agents kept refreshing
+  it). If you still see it, run **Claude Pulse: Reset Session States**.
 - **Indicator disappears in narrow windows** — VS Code hides status bar items from the
   middle of the bar when space runs out; the far edges survive. Claude Pulse therefore sits
   at the far-right edge by default (`claudePulse.priority: -900`). If another extension
@@ -130,5 +136,7 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   right side, far edge, so narrow windows don't hide it)
 - `claudePulse.doneDisplaySeconds` — how long the ✓ stays before fading to idle (default 15)
 - `claudePulse.showElapsed` — show the live timer while working (default on)
-- `claudePulse.waitingTimeoutSeconds` — un-refreshed "needs input" older than this shows as
-  working again, since approving a permission fires no event (default 25; 0 disables)
+- `claudePulse.waitingTimeoutSeconds` — a "needs input" older than this shows as working
+  again, since approving a permission fires no event (default 180; 0 disables)
+- `claudePulse.provisionalWaitSeconds` — show *unconfirmed* permission requests as "needs
+  input" after this many seconds (default 0 = never; see troubleshooting)

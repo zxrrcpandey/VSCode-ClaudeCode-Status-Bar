@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "publisher": "warroom",
   "license": "MIT",
   "repository": {
@@ -87,9 +87,15 @@
         },
         "claudePulse.waitingTimeoutSeconds": {
           "type": "number",
-          "default": 25,
+          "default": 180,
           "minimum": 0,
-          "description": "Claude Code fires no event when you APPROVE a permission, so 'needs input' older than this is shown as working again. 0 disables the timeout."
+          "description": "Claude Code fires no event when you APPROVE a permission, so a 'needs input' state older than this is shown as working again. 0 disables the timeout."
+        },
+        "claudePulse.provisionalWaitSeconds": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Claude Code fires PermissionRequest for auto-approved calls too, so by default only confirmed prompts (an unanswered dialog, or a question) turn the indicator yellow. If your setup never fires the confirming Notification, set this to e.g. 8 to show unconfirmed permission requests as 'needs input' after that many seconds."
         },
         "claudePulse.showElapsed": {
           "type": "boolean",

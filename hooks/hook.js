@@ -87,6 +87,10 @@ function update(input, event, sid, file) {
     started_at: prev.started_at || null,
     ended_at: prev.ended_at || null,
     waiting_since: null,
+    // true only for waits confirmed to need the user (an unanswered dialog,
+    // a question tool). A bare PermissionRequest is NOT confirmation — it
+    // fires for auto-approved calls too.
+    waiting_confirmed: null,
     // Subagents: keyed by the spawning Agent tool_use_id (or by agent_id when
     // no spawn was seen, e.g. workflow agents). Each: {desc, type, state,
     // agent_id, started_at, last_seen, ended_at, tools, tool, todos}.
@@ -154,7 +158,12 @@ function update(input, event, sid, file) {
   // Events from inside a subagent only update that agent's record — never the
   // main session's tool/todos (a subagent's TodoWrite is not your checklist).
   const fromAgent = !!(input.agent_id || input.agentId);
-  if (fromAgent && (event === 'PreToolUse' || event === 'PostToolUse' || event === 'PostToolUseFailure')) {
+  const AGENT_ROUTED = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']);
+  // A subagent asking for permission is not you being asked — in acceptEdits
+  // mode agents fire PermissionRequest constantly for auto-approved calls.
+  // Route these to the agent's liveness only. The one exception is handled
+  // below: Notification(agent_needs_input) genuinely needs the user.
+  if (fromAgent && AGENT_ROUTED.has(event)) {
     const a = touchAgent(input.agent_id || input.agentId, input.agent_type || input.agentType);
     if (event === 'PreToolUse') { a.tools = (a.tools || 0) + 1; a.tool = input.tool_name || a.tool; }
     if (event === 'PostToolUse' && input.tool_name === 'TodoWrite') {
@@ -205,6 +214,7 @@ function update(input, event, sid, file) {
       if (QUESTION_TOOLS.has(input.tool_name)) {
         s.state = 'waiting';
         s.reason = 'question';
+        s.waiting_confirmed = true;   // a question always needs you
         s.waiting_since = keepWaitingSince();
       } else {
         s.state = 'working';
@@ -247,17 +257,28 @@ function update(input, event, sid, file) {
       break;
 
     case 'PermissionRequest':
+      // Provisional only: this fires for auto-approved calls too (observed
+      // firing many times per minute in acceptEdits mode). The confirmation
+      // that a dialog is really sitting unanswered is Notification below.
       s.state = 'waiting';
       s.reason = 'permission';
       s.tool = input.tool_name || s.tool;
+      s.waiting_confirmed = prev.state === 'waiting' ? (prev.waiting_confirmed || false) : false;
       s.waiting_since = keepWaitingSince();
       break;
 
     case 'Notification': {
       const t = input.notification_type;
       if (t === 'permission_prompt') {
+        // Fires ~6s after a dialog is still unanswered: you really are needed.
         s.state = 'waiting';
         s.reason = 'permission';
+        s.waiting_confirmed = true;
+        s.waiting_since = keepWaitingSince();
+      } else if (t === 'agent_needs_input' || t === 'elicitation_dialog' || t === 'elicitation_url_dialog') {
+        s.state = 'waiting';
+        s.reason = t === 'agent_needs_input' ? 'agent' : 'question';
+        s.waiting_confirmed = true;
         s.waiting_since = keepWaitingSince();
       } else if (t === 'idle_prompt') {
         s.state = 'idle';
@@ -288,6 +309,17 @@ function update(input, event, sid, file) {
 
     default:
       return; // unknown event — leave state untouched
+  }
+
+  // Keep the age and confirmation of a wait across unrelated events — losing
+  // them made "needs input" un-ageable and therefore permanent.
+  if (s.state === 'waiting') {
+    if (!s.waiting_since) s.waiting_since = prev.waiting_since || now;
+    if (s.reason == null) s.reason = prev.reason || 'permission';
+    if (s.waiting_confirmed == null) s.waiting_confirmed = prev.waiting_confirmed || false;
+  } else {
+    s.waiting_since = null;
+    s.waiting_confirmed = false;
   }
 
   pruneAgents();
