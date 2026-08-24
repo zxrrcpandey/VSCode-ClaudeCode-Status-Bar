@@ -91,6 +91,11 @@ function update(input, event, sid, file) {
     // a question tool). A bare PermissionRequest is NOT confirmation — it
     // fires for auto-approved calls too.
     waiting_confirmed: null,
+    // When the user was last confirmed to be needed. The approval timeout is
+    // measured from HERE, not from waiting_since: a dialog opening during a
+    // long-running tool call inherits that call's old start time, and ageing
+    // the timeout from it would render a real prompt as already expired.
+    confirmed_at: null,
     // Subagents: keyed by the spawning Agent tool_use_id (or by agent_id when
     // no spawn was seen, e.g. workflow agents). Each: {desc, type, state,
     // agent_id, started_at, last_seen, ended_at, tools, tool, todos}.
@@ -215,6 +220,7 @@ function update(input, event, sid, file) {
         s.state = 'waiting';
         s.reason = 'question';
         s.waiting_confirmed = true;   // a question always needs you
+        s.confirmed_at = now;
         s.waiting_since = keepWaitingSince();
       } else {
         s.state = 'working';
@@ -274,11 +280,13 @@ function update(input, event, sid, file) {
         s.state = 'waiting';
         s.reason = 'permission';
         s.waiting_confirmed = true;
+        s.confirmed_at = now;   // re-armed by every repeat notification
         s.waiting_since = keepWaitingSince();
       } else if (t === 'agent_needs_input' || t === 'elicitation_dialog' || t === 'elicitation_url_dialog') {
         s.state = 'waiting';
         s.reason = t === 'agent_needs_input' ? 'agent' : 'question';
         s.waiting_confirmed = true;
+        s.confirmed_at = now;
         s.waiting_since = keepWaitingSince();
       } else if (t === 'idle_prompt') {
         s.state = 'idle';
@@ -317,9 +325,11 @@ function update(input, event, sid, file) {
     if (!s.waiting_since) s.waiting_since = prev.waiting_since || now;
     if (s.reason == null) s.reason = prev.reason || 'permission';
     if (s.waiting_confirmed == null) s.waiting_confirmed = prev.waiting_confirmed || false;
+    if (s.confirmed_at == null) s.confirmed_at = prev.confirmed_at || null;
   } else {
     s.waiting_since = null;
     s.waiting_confirmed = false;
+    s.confirmed_at = null;
   }
 
   pruneAgents();

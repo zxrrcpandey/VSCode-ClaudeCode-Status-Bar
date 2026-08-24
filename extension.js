@@ -30,6 +30,23 @@ function buddyName() {
   return String(raw).replace(/[^\p{L}\p{N} .'-]/gu, '').trim().split(/\s+/)[0] || '';
 }
 
+// The extension reads fields the hook writes, so the two must not drift. If
+// hooks are installed and the deployed script differs from the bundled one,
+// refresh it in place (settings.json already points at this path).
+function syncInstalledHook() {
+  try {
+    const dest = path.join(os.homedir(), '.claude', 'claude-pulse', 'hook.js');
+    if (!fs.existsSync(dest)) return;   // hooks not installed — nothing to sync
+    const src = path.join(__dirname, 'hooks', 'hook.js');
+    if (!fs.existsSync(src)) return;
+    const want = fs.readFileSync(src, 'utf8');
+    if (fs.readFileSync(dest, 'utf8') === want) return;
+    const tmp = dest + '.tmp-' + process.pid;
+    fs.writeFileSync(tmp, want);
+    fs.renameSync(tmp, dest);
+  } catch { /* best effort — never block activation */ }
+}
+
 function detectGitName() {
   cp.execFile('git', ['config', '--get', 'user.name'], { timeout: 5000 }, (err, stdout) => {
     if (err || !stdout) return;
@@ -247,14 +264,25 @@ function effectiveState(s, t, now) {
   if ((s.state === 'done' || s.state === 'error') &&
       now - (s.ended_at || s.updated_at || 0) > t.doneFadeMs) return 'idle';
   if (s.state === 'waiting') {
+    // A state file with no waiting_confirmed key came from a hook older than
+    // 0.10.1: no information, not "unconfirmed". Treat it the pre-0.10.1 way
+    // so a half-upgraded install degrades instead of hiding every prompt.
+    const confirmed = ('waiting_confirmed' in s) ? !!s.waiting_confirmed : true;
     // Age the wait from when it STARTED. Using updated_at let unrelated
     // traffic (parallel subagents) refresh it forever, pinning the item
-    // yellow. Also: a bare PermissionRequest is not proof you are needed —
-    // it fires for auto-approved calls — so unconfirmed waits stay quiet
-    // unless provisionalWaitSeconds says otherwise.
+    // yellow. A bare PermissionRequest is not proof you are needed — it fires
+    // for auto-approved calls — so unconfirmed waits stay quiet unless
+    // provisionalWaitSeconds says otherwise.
     const age = now - (s.waiting_since || s.updated_at || 0);
-    if (!s.waiting_confirmed && age < t.provisionalMs) return 'working';
-    if (age > t.waitTimeoutMs) return 'working';   // no event marks approval
+    if (!confirmed && age < t.provisionalMs) return 'working';
+    // The timeout exists only because approving a permission fires no event.
+    // Measure it from the confirmation (a dialog opening mid-command inherits
+    // that command's old start time), and never apply it to questions or
+    // agent prompts — those always end with an event that clears them.
+    if (s.reason !== 'question' && s.reason !== 'agent') {
+      const confAge = now - (s.confirmed_at || s.waiting_since || s.updated_at || 0);
+      if (confAge > t.waitTimeoutMs) return 'working';
+    }
     return 'waiting';
   }
   return s.state;
@@ -327,7 +355,9 @@ function render() {
   item.color = undefined;
 
   if (st === 'waiting') {
-    item.text = '$(bell) Claude · ' + (s.reason === 'question' ? 'has a question' : 'needs input') + suffix;
+    const what = s.reason === 'question' ? 'has a question'
+      : s.reason === 'agent' ? 'agent needs input' : 'needs input';
+    item.text = '$(bell) Claude · ' + what + suffix;
     item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
   } else if (st === 'working') {
     const spin = '$(loading~spin) ';
@@ -610,6 +640,7 @@ function activate(context) {
   pollTimer = setInterval(refresh, 2000);
   // 1s tick so the elapsed timer counts smoothly.
   tickTimer = setInterval(render, 1000);
+  syncInstalledHook();
   detectGitName();
   // Token usage scan: once shortly after startup, then every 30s (incremental).
   setTimeout(refreshUsage, 1500);

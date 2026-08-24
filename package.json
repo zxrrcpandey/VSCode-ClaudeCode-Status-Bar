@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "publisher": "warroom",
   "license": "MIT",
   "repository": {
@@ -87,9 +87,9 @@
         },
         "claudePulse.waitingTimeoutSeconds": {
           "type": "number",
-          "default": 180,
+          "default": 45,
           "minimum": 0,
-          "description": "Claude Code fires no event when you APPROVE a permission, so a 'needs input' state older than this is shown as working again. 0 disables the timeout."
+          "description": "Claude Code fires no event when you APPROVE a permission, so a confirmed permission prompt is shown as working again this many seconds after the last confirmation (repeat notifications re-arm it). Questions and agent prompts are never aged out. 0 disables the timeout."
         },
         "claudePulse.provisionalWaitSeconds": {
           "type": "number",

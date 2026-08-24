@@ -292,9 +292,13 @@
   function lines() {
     const d = data;
     if (d.state === 'waiting') {
-      return d.reason === 'question'
-        ? ['Claude has a <b>question</b> for you — over in the panel!', 'Your opinion is required. I would answer, but I am busy being adorable.']
-        : ['<b>Claude needs your permission!</b> Go press the button.', 'Ding ding! A permission prompt is waiting on you.'];
+      if (d.reason === 'question') {
+        return ['Claude has a <b>question</b> for you — over in the panel!', 'Your opinion is required. I would answer, but I am busy being adorable.'];
+      }
+      if (d.reason === 'agent') {
+        return ['One of Claude’s <b>helpers</b> needs an answer from you.', 'A subagent is stuck waiting on your input — check the panel!'];
+      }
+      return ['<b>Claude needs your permission!</b> Go press the button.', 'Ding ding! A permission prompt is waiting on you.'];
     }
     if (d.state === 'working') {
       const base = d.todos && d.todos.total

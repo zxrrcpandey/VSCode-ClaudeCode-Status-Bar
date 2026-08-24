@@ -73,6 +73,9 @@ lives in its own panel (the same approach vscode-pets uses) — it cannot walk o
 ## Install
 
 ```sh
+# Run the waiting-state regression suite (uses a throwaway HOME):
+#   HOME=$(mktemp -d) node scripts/test-waiting.js
+
 # 1. Wire up the hooks (backs up settings.json first; idempotent)
 node scripts/install-hooks.js
 
@@ -113,8 +116,10 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   to e.g. `8` to show unconfirmed permission requests after that many seconds.
 - **"Needs input" flips back to working while the dialog is still open** — Claude Code fires
   no event at the moment you approve a permission (the next one comes only when the tool
-  finishes), so a wait older than `claudePulse.waitingTimeoutSeconds` (default 180 s) is
-  assumed answered. Set it to 0 to keep the yellow state until an event clears it.
+  finishes), so a wait older than `claudePulse.waitingTimeoutSeconds` (default 45 s) is
+  assumed answered — measured from the last confirmation, and re-armed if Claude Code repeats
+  it. Questions (`AskUserQuestion`, `ExitPlanMode`) and agent prompts are never aged out. Set
+  it to 0 to keep the yellow state until an event clears it.
 - **"Needs input" stuck on while Claude is clearly working** — fixed in 0.10.1: subagent
   permission events no longer mark the *main* session as waiting, and a wait is now aged from
   when it started rather than from the last event of any kind (parallel agents kept refreshing
@@ -136,7 +141,8 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   right side, far edge, so narrow windows don't hide it)
 - `claudePulse.doneDisplaySeconds` — how long the ✓ stays before fading to idle (default 15)
 - `claudePulse.showElapsed` — show the live timer while working (default on)
-- `claudePulse.waitingTimeoutSeconds` — a "needs input" older than this shows as working
-  again, since approving a permission fires no event (default 180; 0 disables)
+- `claudePulse.waitingTimeoutSeconds` — a confirmed *permission* prompt reverts to working
+  this long after the last confirmation, since approving fires no event (default 45; repeat
+  notifications re-arm it; questions and agent prompts are never aged out; 0 disables)
 - `claudePulse.provisionalWaitSeconds` — show *unconfirmed* permission requests as "needs
   input" after this many seconds (default 0 = never; see troubleshooting)

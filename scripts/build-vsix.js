@@ -16,7 +16,8 @@ const cp = require('child_process');
 const ROOT = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const FILES = ['package.json', 'extension.js', 'usage-scan.js', 'buddy.html', 'README.md', 'LICENSE'];
-const DIRS = ['media'];
+// hooks/ ships too: the extension keeps the installed hook in sync with it.
+const DIRS = ['media', 'hooks'];
 
 const build = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-pulse-vsix-'));
 const ext = path.join(build, 'extension');
