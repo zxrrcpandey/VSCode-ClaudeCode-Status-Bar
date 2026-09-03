@@ -168,6 +168,13 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   middle of the bar when space runs out; the far edges survive. Claude Pulse therefore sits
   at the far-right edge by default (`claudePulse.priority: -900`). If another extension
   crowds it out, lower the priority further, or move it with `claudePulse.alignment`.
+- **The desktop buddy blocks my clicks** — fixed in 0.12.1. A window only lets clicks reach
+  the app underneath when it ignores mouse events outright; returning nil from a hit test is
+  not enough. The panel is now click-through by default and becomes clickable only while the
+  cursor is over the character.
+- **The desktop buddy vanished** — fixed in 0.12.1: the web content process can be killed
+  under memory pressure, leaving the window up but empty. The buddy now reloads itself when
+  that happens, and a watchdog revives it if the page stops reporting its position for 5 s.
 - **Stale ghost sessions** — busy sessions with no events for a long time are dropped
   automatically (60 min working; anything untouched for 4 h is deleted). To force-clear a
   stuck indicator, run **Claude Pulse: Reset Session States** from the command palette (or

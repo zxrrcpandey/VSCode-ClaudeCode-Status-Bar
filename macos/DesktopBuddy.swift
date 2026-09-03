@@ -20,6 +20,9 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private var container: PassthroughView?
     private var lastPayload: String = "{}"
     private var ready = false
+    private var hotRect: NSRect = .zero          // character position, window coords
+    private var lastRectAt = Date.distantPast    // page liveness
+    private var cursorTimer: Timer?
 
     static let characters = ["critter", "robot", "cat", "pup", "turtle", "snail", "bee", "dragon", "ghost"]
 
@@ -44,9 +47,29 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     func reload() {
         let wasVisible = isVisible
         panel?.orderOut(nil)
+        cursorTimer?.invalidate(); cursorTimer = nil
         webView?.configuration.userContentController.removeAllUserScripts()
         webView = nil; container = nil; panel = nil; ready = false
+        hotRect = .zero
         if wasVisible { show() }
+    }
+
+    /// Clickable only while the cursor is actually on the character; also the
+    /// heartbeat that notices a dead page and revives it.
+    private func followCursor() {
+        guard let panel, panel.isVisible else { return }
+        let over = !hotRect.isEmpty && panel.convertToScreen(hotRect).contains(NSEvent.mouseLocation)
+        if panel.ignoresMouseEvents == over { panel.ignoresMouseEvents = !over }
+
+        // The page reports its position every 100ms. Silence means the web
+        // content process died (the window goes blank but stays up) or the
+        // script wedged — reload rather than leaving an empty screen.
+        if ready, Date().timeIntervalSince(lastRectAt) > 5 {
+            lastRectAt = Date()
+            hotRect = .zero
+            panel.ignoresMouseEvents = true
+            webView?.loadHTMLString(html(), baseURL: nil)
+        }
     }
 
     /// One window spanning every display, so the character can walk from one
@@ -105,6 +128,12 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = false
+        // A window only lets clicks reach the app underneath when it ignores
+        // mouse events outright — returning nil from hitTest is not enough, it
+        // just makes the click land nowhere. So the window is click-through by
+        // default and only becomes clickable while the cursor is over the
+        // character (see followCursor).
+        p.ignoresMouseEvents = true
         p.level = .floating                                   // above ordinary windows
         p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         p.isFloatingPanel = true
@@ -113,6 +142,13 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         p.setFrame(frame, display: true)
 
         panel = p; webView = web; container = view
+
+        // NSEvent.mouseLocation needs no permissions and no event stream, so a
+        // small poll is the cheapest way to know when the cursor is over the
+        // character without intercepting anyone else's clicks.
+        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.followCursor() }
+        RunLoop.main.add(t, forMode: .common)
+        cursorTimer = t
 
         // Follow display changes (resolution, arrangement, a screen unplugged).
         NotificationCenter.default.addObserver(
@@ -200,7 +236,17 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         ready = true
+        lastRectAt = Date()
         post0(lastPayload)
+    }
+
+    /// The web content process can be killed under memory pressure; without
+    /// this the window simply goes empty and the buddy "disappears".
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        ready = false
+        hotRect = .zero
+        panel?.ignoresMouseEvents = true
+        webView.loadHTMLString(html(), baseURL: nil)
     }
 
     private func post0(_ json: String) {
@@ -215,11 +261,13 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
            let x = body["x"] as? Double, let y = body["y"] as? Double,
            let w = body["w"] as? Double, let h = body["h"] as? Double,
            let container {
+            lastRectAt = Date()
             // CSS coordinates (top-left origin) → AppKit view coordinates.
             let pad: CGFloat = 4
-            container.hotRect = NSRect(x: x - pad,
-                                       y: container.bounds.height - y - h - pad,
-                                       width: w + pad * 2, height: h + pad * 2)
+            let r = NSRect(x: x - pad, y: container.bounds.height - y - h - pad,
+                           width: w + pad * 2, height: h + pad * 2)
+            hotRect = r
+            container.hotRect = r
         }
     }
 }
