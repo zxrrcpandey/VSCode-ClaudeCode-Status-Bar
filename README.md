@@ -37,6 +37,23 @@ cd macos && ./build.sh --install     # builds ClaudePulse.app and launches it
   binary with `swiftc` and assembles the `.app`. Same waiting-state rules as the extension
   (see `scripts/test-waiting.js`).
 
+### Desktop Buddy — the character on your actual screen
+
+What VS Code could not do: enable **Desktop Buddy** in the menu and the character leaves the
+panel and roams your real desktop, above every other app. The screen edges are its world —
+it walks along the bottom, climbs the sides, hangs from the top, and reacts to Claude exactly
+as it does in the editor (pacing while working, flailing when you are needed, speech bubbles
+when you click it).
+
+- Spans **all displays** as one world, so it can walk from one screen to the next, and
+  re-lays itself out when you plug or unplug a monitor.
+- **Clicks pass straight through** to whatever is underneath — the page reports where the
+  character is and only that small rectangle is clickable, so the buddy can never swallow a
+  click meant for another app.
+- Menu: pick any of the nine characters or your own image, and a size (Small → Huge).
+- It is the *same* `buddy.html` the VS Code panel uses — hosted in a transparent
+  non-activating panel — so the art, animation and dialogue live in one place.
+
 ## Subagents
 
 When Claude spawns subagents (the Agent tool, workflows, parallel reviewers), the indicator

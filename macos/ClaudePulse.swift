@@ -324,6 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastNotifiedWaiting: Set<String> = []
     private var menuOpen = false
     private var usageTick = 0
+    private let buddy = DesktopBuddy()
 
     private let spinner = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
 
@@ -351,6 +352,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if usage.available { usage.refresh { [weak self] in self?.render() } }
 
+        if UserDefaults.standard.bool(forKey: "buddyVisible") { buddy.show() }
+
         refresh()
         // 250ms keeps the spinner alive and elapsed times honest; the work is
         // reading a handful of small files.
@@ -374,7 +377,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sessions = StateReader.read()
         render()
         if menuOpen, let menu = statusItem.menu { rebuild(menu) }
+        if buddy.isVisible { buddy.post(buddyPayload()) }
         notifyIfNeeded()
+    }
+
+    /// The payload shape buddy.html expects (same as the VS Code extension's).
+    private func buddyPayload() -> [String: Any] {
+        let now = Date().timeIntervalSince1970 * 1000
+        guard let (s, st) = primary() else { return ["state": "idle"] }
+        var p: [String: Any] = ["state": st.rawValue, "project": s.project]
+        if let r = s.reason { p["reason"] = r }
+        if let t = s.tool { p["tool"] = t }
+        if let started = s.startedAt { p["elapsedMs"] = now - started }
+        if let started = s.startedAt, let ended = s.endedAt { p["totalMs"] = ended - started }
+        if let d = s.todosDone, let t = s.todosTotal, t > 0 {
+            var todos: [String: Any] = ["done": d, "total": t]
+            if let a = s.todosActive { todos["active"] = a }
+            p["todos"] = todos
+        }
+        if let out = usage.bySession[s.id], out > 0 { p["tokensSession"] = out }
+        let today = usage.sum(days: 1).reduce(0) { $0 + $1.out }
+        if today > 0 { p["tokensToday"] = today }
+        p["agents"] = s.runningAgents.prefix(8).map { a -> [String: Any] in
+            var d: [String: Any] = ["type": a.type, "tools": a.tools]
+            if let desc = a.desc { d["desc"] = desc }
+            if let started = a.startedAt { d["elapsedMs"] = now - started }
+            return d
+        }
+        return p
     }
 
     private func watchStateDir() {
@@ -561,6 +591,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        let showBuddy = NSMenuItem(title: "Desktop Buddy", action: #selector(toggleBuddy(_:)), keyEquivalent: "")
+        showBuddy.target = self
+        showBuddy.state = buddy.isVisible ? .on : .off
+        menu.addItem(showBuddy)
+
+        let charItem = NSMenuItem(title: "Buddy Character", action: nil, keyEquivalent: "")
+        let charMenu = NSMenu()
+        let current = UserDefaults.standard.string(forKey: "buddyCharacter") ?? "critter"
+        let usingImage = !(UserDefaults.standard.string(forKey: "buddyImage") ?? "").isEmpty
+        let labels = ["critter": "🐹 Critter", "robot": "🤖 Robot", "cat": "🐱 Cat", "pup": "🐶 Pup",
+                      "turtle": "🐢 Turtle", "snail": "🐌 Snail", "bee": "🐝 Bee",
+                      "dragon": "🐉 Dragon", "ghost": "👻 Ghost"]
+        for c in DesktopBuddy.characters {
+            let i = NSMenuItem(title: labels[c] ?? c, action: #selector(pickCharacter(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = c
+            i.state = (!usingImage && c == current) ? .on : .off
+            charMenu.addItem(i)
+        }
+        charMenu.addItem(NSMenuItem.separator())
+        let own = NSMenuItem(title: "🖼️ My own image…", action: #selector(pickImage(_:)), keyEquivalent: "")
+        own.target = self
+        own.state = usingImage ? .on : .off
+        charMenu.addItem(own)
+        charItem.submenu = charMenu
+        menu.addItem(charItem)
+
+        let sizeItem = NSMenuItem(title: "Buddy Size", action: nil, keyEquivalent: "")
+        let sizeMenu = NSMenu()
+        let zoom = UserDefaults.standard.object(forKey: "buddyZoom") as? Double ?? 1.0
+        for (label, value) in [("Small", 0.7), ("Normal", 1.0), ("Large", 1.6), ("Huge", 2.4)] {
+            let i = NSMenuItem(title: label, action: #selector(pickSize(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = value
+            i.state = abs(zoom - value) < 0.01 ? .on : .off
+            sizeMenu.addItem(i)
+        }
+        sizeItem.submenu = sizeMenu
+        menu.addItem(sizeItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let notify = NSMenuItem(title: "Notify when Claude needs input",
                                 action: #selector(toggleNotify(_:)), keyEquivalent: "")
         notify.target = self
@@ -586,6 +658,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openProject(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    @objc private func toggleBuddy(_ sender: NSMenuItem) {
+        buddy.toggle()
+        if buddy.isVisible { buddy.post(buddyPayload()) }
+    }
+
+    @objc private func pickCharacter(_ sender: NSMenuItem) {
+        guard let c = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(c, forKey: "buddyCharacter")
+        UserDefaults.standard.set("", forKey: "buddyImage")
+        buddy.reload()
+        if !buddy.isVisible { buddy.show() }
+        buddy.post(buddyPayload())
+    }
+
+    @objc private func pickSize(_ sender: NSMenuItem) {
+        guard let z = sender.representedObject as? Double else { return }
+        UserDefaults.standard.set(z, forKey: "buddyZoom")
+        buddy.reload()
+        if !buddy.isVisible { buddy.show() }
+        buddy.post(buddyPayload())
+    }
+
+    @objc private func pickImage(_ sender: NSMenuItem) {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.title = "Choose your buddy character image"
+        panel.allowedFileTypes = ["png", "gif", "webp", "svg", "jpg", "jpeg"]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        UserDefaults.standard.set(url.path, forKey: "buddyImage")
+        buddy.reload()
+        if !buddy.isVisible { buddy.show() }
+        buddy.post(buddyPayload())
     }
 
     @objc private func toggleNotify(_ sender: NSMenuItem) {

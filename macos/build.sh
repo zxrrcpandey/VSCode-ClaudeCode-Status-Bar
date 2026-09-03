@@ -15,7 +15,8 @@ rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 # Universal binary when the SDK can produce one, otherwise native arch only.
-compile() { swiftc -O -parse-as-library -target "$1-apple-macos$MIN_MACOS" -o "$2" ClaudePulse.swift; }
+SOURCES=(ClaudePulse.swift DesktopBuddy.swift)
+compile() { swiftc -O -parse-as-library -target "$1-apple-macos$MIN_MACOS" -o "$2" "${SOURCES[@]}"; }
 if compile arm64 build/pulse-arm64 2>/dev/null && compile x86_64 build/pulse-x86_64 2>/dev/null; then
   lipo -create build/pulse-arm64 build/pulse-x86_64 -output "$APP/Contents/MacOS/ClaudePulse"
   echo "built universal (arm64 + x86_64)"
@@ -25,8 +26,10 @@ else
 fi
 rm -f build/pulse-arm64 build/pulse-x86_64
 
-# Token usage reuses the same scanner the VS Code extension runs.
+# Token usage reuses the same scanner the VS Code extension runs, and the
+# desktop buddy reuses the very same character page as the VS Code panel.
 cp ../usage-scan.js "$APP/Contents/Resources/usage-scan.js"
+cp ../buddy.html "$APP/Contents/Resources/buddy.html"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
