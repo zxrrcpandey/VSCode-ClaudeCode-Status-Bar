@@ -42,6 +42,36 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private var timer: Timer?
     private var nextMigration = Date.distantFuture
     private var migrationDue = false
+    private var lastHoverPause = Date.distantPast
+    /// How close the cursor must get before the character stops to be clicked.
+    /// `defaults write com.warroom.claude-pulse buddyNoticeRadius -float 200`
+    /// makes it notice you sooner; a small value makes it harder to catch.
+    static var noticeRadius: CGFloat {
+        let v = UserDefaults.standard.object(forKey: "buddyNoticeRadius") as? Double ?? 0
+        return v > 0 ? CGFloat(v) : 130
+    }
+    private var lastDebugAt = Date.distantPast
+
+    /// `defaults write com.warroom.claude-pulse buddyDebug -bool true` writes a
+    /// trace to ~/.claude/claude-pulse/buddy-debug.log (hover, clicks, hop).
+    private var debugLogging: Bool { UserDefaults.standard.bool(forKey: "buddyDebug") }
+
+    private func rectStr(_ r: NSRect) -> String {
+        "(\(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))x\(Int(r.height)))"
+    }
+
+    private func log(_ line: String) {
+        guard debugLogging else { return }
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/claude-pulse/buddy-debug.log")
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        guard let data = ("\(stamp) \(line)\n").data(using: .utf8) else { return }
+        if let h = try? FileHandle(forWritingTo: path) {
+            h.seekToEndOfFile(); try? h.write(contentsOf: data); try? h.close()
+        } else {
+            try? data.write(to: path)
+        }
+    }
 
     static let characters = ["critter", "robot", "cat", "pup", "turtle", "snail", "bee", "dragon", "ghost"]
 
@@ -115,7 +145,7 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             ucc.add(self, name: "pulse")
             cfg.userContentController = ucc
 
-            let web = WKWebView(frame: NSRect(origin: .zero, size: frame.size), configuration: cfg)
+            let web = BuddyWebView(frame: NSRect(origin: .zero, size: frame.size), configuration: cfg)
             web.navigationDelegate = self
             web.setValue(false, forKey: "drawsBackground")      // transparent over the desktop
             if #available(macOS 12.0, *) { web.underPageBackgroundColor = .clear }
@@ -126,9 +156,9 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             view.addSubview(web)
 
             // A non-activating panel never steals focus from the app you are using.
-            let p = NSPanel(contentRect: frame,
-                            styleMask: [.borderless, .nonactivatingPanel],
-                            backing: .buffered, defer: false)
+            let p = BuddyPanel(contentRect: frame,
+                               styleMask: [.borderless, .nonactivatingPanel],
+                               backing: .buffered, defer: false)
             p.isOpaque = false
             p.backgroundColor = .clear
             p.hasShadow = false
@@ -169,8 +199,22 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         let s = screens[active]
 
         // Clickable only while the cursor is actually on the character.
-        let over = !s.hotRect.isEmpty && s.panel.convertToScreen(s.hotRect).contains(NSEvent.mouseLocation)
+        let mouse = NSEvent.mouseLocation
+        let onScreenRect = s.panel.convertToScreen(s.hotRect)
+        let over = !s.hotRect.isEmpty && onScreenRect.contains(mouse)
         if s.panel.ignoresMouseEvents == over { s.panel.ignoresMouseEvents = !over }
+        // Reach for the buddy and it stops and waits, like a pet noticing your
+        // hand. Without this it walks (or climbs) out from under the cursor
+        // before the click ever lands — the reason it felt unclickable.
+        let near = onScreenRect.insetBy(dx: -Self.noticeRadius, dy: -Self.noticeRadius).contains(mouse)
+        if near, Date().timeIntervalSince(lastHoverPause) > 0.2 {
+            lastHoverPause = Date()
+            s.web.evaluateJavaScript("try { pauseUntil = performance.now() + 700 } catch (e) {}")
+        }
+        if debugLogging, Date().timeIntervalSince(lastDebugAt) > 0.5 {
+            lastDebugAt = Date()
+            log("hot=\(rectStr(onScreenRect)) mouse=(\(Int(mouse.x)),\(Int(mouse.y))) over=\(over) near=\(near) ignoresMouse=\(s.panel.ignoresMouseEvents) key=\(s.panel.isKeyWindow)")
+        }
 
         // The page reports its position every 100ms. Silence means the web
         // content process died (window stays up but blank) or the script
@@ -333,13 +377,17 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         guard let body = message.body as? [String: Any],
               let web = message.webView,
               let s = screens.first(where: { $0.web === web }) else { return }
+        if body["type"] as? String == "poke" {
+            log("POKE — the page received a click")
+            return
+        }
         if body["type"] as? String == "rect",
            let x = body["x"] as? Double, let y = body["y"] as? Double,
            let w = body["w"] as? Double, let h = body["h"] as? Double {
             s.lastRectAt = Date()
             if abs(x - s.lastX) > 1 { s.lastX = x; s.stillSince = Date() }
             // CSS coordinates (top-left origin) → AppKit view coordinates.
-            let pad: CGFloat = 4
+            let pad: CGFloat = 10
             let r = NSRect(x: x - pad, y: s.container.bounds.height - y - h - pad,
                            width: w + pad * 2, height: h + pad * 2)
             s.hotRect = r
@@ -358,4 +406,23 @@ final class PassthroughView: NSView {
         guard hotRect.contains(local) else { return nil }
         return super.hitTest(point)
     }
+
+    // Claude Pulse is an accessory app, so it is never the active app: without
+    // this, macOS spends the click activating the window instead of delivering
+    // it, and the character can never be clicked.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// Same reason as PassthroughView: the click must reach the page, not be
+/// eaten as a window-activating click.
+final class BuddyWebView: WKWebView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// A borderless panel cannot become key by default, and WebKit needs a key
+/// window to deliver a proper click. Non-activating means taking key status
+/// still does not steal focus from the app you are working in.
+final class BuddyPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }

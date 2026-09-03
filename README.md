@@ -54,6 +54,9 @@ when you click it).
 - **Clicks pass straight through** to whatever is underneath — the page reports where the
   character is and only that small rectangle is clickable, so the buddy can never swallow a
   click meant for another app.
+- **Reach for it and it stops.** The character notices the cursor coming within ~130px and
+  holds still so you can actually click it — it walks and climbs far too briskly to hit
+  otherwise. Tune with `defaults write com.warroom.claude-pulse buddyNoticeRadius -float 200`.
 - Menu: pick any of the nine characters or your own image, and a size (Small → Huge).
 - It is the *same* `buddy.html` the VS Code panel uses — hosted in a transparent
   non-activating panel — so the art, animation and dialogue live in one place.
@@ -172,6 +175,11 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   middle of the bar when space runs out; the far edges survive. Claude Pulse therefore sits
   at the far-right edge by default (`claudePulse.priority: -900`). If another extension
   crowds it out, lower the priority further, or move it with `claudePulse.alignment`.
+- **I cannot click the desktop buddy** — fixed in 0.12.3, and it had two causes: the
+  character moved out from under the cursor before the click landed (it now stops when your
+  cursor comes near), and macOS was spending the click activating the window instead of
+  delivering it, because Claude Pulse is an accessory app that is never the active app — the
+  view now accepts that first click. `defaults write com.warroom.claude-pulse buddyDebug  -bool true` traces hover and clicks to ~/.claude/claude-pulse/buddy-debug.log.
 - **The desktop buddy blocks my clicks** — fixed in 0.12.1. A window only lets clicks reach
   the app underneath when it ignores mouse events outright; returning nil from a hit test is
   not enough. The panel is now click-through by default and becomes clickable only while the
