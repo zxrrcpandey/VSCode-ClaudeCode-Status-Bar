@@ -45,8 +45,12 @@ it walks along the bottom, climbs the sides, hangs from the top, and reacts to C
 as it does in the editor (pacing while working, flailing when you are needed, speech bubbles
 when you click it).
 
-- Spans **all displays** as one world, so it can walk from one screen to the next, and
-  re-lays itself out when you plug or unplug a monitor.
+- **One panel per screen**, and the buddy migrates between them every minute or two,
+  entering from the facing edge. macOS defaults to *Displays have separate Spaces*, under
+  which a single window cannot span two displays — it is pinned to one and clipped there, so
+  a spanning window makes the buddy vanish on the other screen. Panels are rebuilt when a
+  monitor is plugged in, unplugged or rearranged. Tune the hop with
+  `defaults write com.warroom.claude-pulse buddyMigrateSeconds -float 30`.
 - **Clicks pass straight through** to whatever is underneath — the page reports where the
   character is and only that small rectangle is clickable, so the buddy can never swallow a
   click meant for another app.
@@ -172,6 +176,9 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   the app underneath when it ignores mouse events outright; returning nil from a hit test is
   not enough. The panel is now click-through by default and becomes clickable only while the
   cursor is over the character.
+- **The desktop buddy vanishes on my second screen** — fixed in 0.12.2. With *Displays have
+  separate Spaces* on (the macOS default) a window cannot span displays, so the old
+  single wide window only ever rendered on one of them. Each screen now has its own panel.
 - **The desktop buddy vanished** — fixed in 0.12.1: the web content process can be killed
   under memory pressure, leaving the window up but empty. The buddy now reloads itself when
   that happens, and a watchdog revives it if the page stops reporting its position for 5 s.

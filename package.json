@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "publisher": "warroom",
   "license": "MIT",
   "repository": {

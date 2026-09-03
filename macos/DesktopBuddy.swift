@@ -1,165 +1,235 @@
-// Desktop buddy: the character roaming your actual screen, above every app.
+// Desktop buddy: the character roaming your actual screens, above every app.
 //
 // The animation, art and dialogue are the shared buddy.html — the same file
-// the VS Code panel uses — hosted in a transparent, borderless, always-on-top
-// panel. The screen edges become its floor, walls and ceiling, so it walks
-// along the bottom of the display, climbs the sides and hangs from the top.
+// the VS Code panel uses — hosted in transparent, borderless, always-on-top
+// panels. Screen edges become its floor, walls and ceiling, so it walks along
+// the bottom, climbs the sides and hangs from the top.
 //
-// Clicks pass straight through the window to whatever is underneath, except
-// on the character itself: the page reports its position and only that small
-// rectangle is hit-testable, so the buddy can never eat a click meant for
-// another app.
+// One panel PER SCREEN. macOS defaults to "Displays have separate Spaces",
+// under which a window cannot span two displays: it is pinned to one and
+// clipped there, so a single wide window makes the buddy vanish whenever it
+// wanders onto the other screen. Instead each screen gets its own panel and
+// the buddy migrates between them, entering from the facing edge.
+//
+// Clicks pass straight through to whatever is underneath: the panels ignore
+// mouse events except while the cursor is actually over the character.
 
 import AppKit
 import WebKit
 
+/// One screen's transparent panel and the page inside it.
+final class BuddyScreen {
+    let panel: NSPanel
+    let web: WKWebView
+    let container: PassthroughView
+    var hotRect: NSRect = .zero
+    var lastRectAt = Date.distantPast
+    var ready = false
+    /// Set while the character has not moved — a natural moment to migrate.
+    var lastX: Double = -1
+    var stillSince = Date.distantPast
+
+    init(panel: NSPanel, web: WKWebView, container: PassthroughView) {
+        self.panel = panel; self.web = web; self.container = container
+    }
+}
+
 final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
 
-    private var panel: NSPanel?
-    private var webView: WKWebView?
-    private var container: PassthroughView?
+    private var screens: [BuddyScreen] = []
+    private var active = 0
     private var lastPayload: String = "{}"
-    private var ready = false
-    private var hotRect: NSRect = .zero          // character position, window coords
-    private var lastRectAt = Date.distantPast    // page liveness
-    private var cursorTimer: Timer?
+    private var timer: Timer?
+    private var nextMigration = Date.distantFuture
+    private var migrationDue = false
 
     static let characters = ["critter", "robot", "cat", "pup", "turtle", "snail", "bee", "dragon", "ghost"]
 
-    var isVisible: Bool { panel?.isVisible ?? false }
+    var isVisible: Bool { screens.indices.contains(active) && screens[active].panel.isVisible }
 
     // MARK: Lifecycle
 
     func toggle() { isVisible ? hide() : show() }
 
     func show() {
-        if panel == nil { build() }
-        panel?.orderFrontRegardless()
+        if screens.isEmpty { build() }
+        guard screens.indices.contains(active) else { return }
+        screens[active].panel.alphaValue = 1
+        screens[active].panel.orderFrontRegardless()
+        scheduleMigration()
         UserDefaults.standard.set(true, forKey: "buddyVisible")
     }
 
     func hide() {
-        panel?.orderOut(nil)
+        for s in screens { s.panel.orderOut(nil) }
         UserDefaults.standard.set(false, forKey: "buddyVisible")
     }
 
-    /// Rebuild from scratch — used when the character changes.
+    /// Rebuild from scratch — character, size or screen layout changed.
     func reload() {
         let wasVisible = isVisible
-        panel?.orderOut(nil)
-        cursorTimer?.invalidate(); cursorTimer = nil
-        webView?.configuration.userContentController.removeAllUserScripts()
-        webView = nil; container = nil; panel = nil; ready = false
-        hotRect = .zero
+        teardown()
         if wasVisible { show() }
     }
 
-    /// Clickable only while the cursor is actually on the character; also the
-    /// heartbeat that notices a dead page and revives it.
-    private func followCursor() {
-        guard let panel, panel.isVisible else { return }
-        let over = !hotRect.isEmpty && panel.convertToScreen(hotRect).contains(NSEvent.mouseLocation)
-        if panel.ignoresMouseEvents == over { panel.ignoresMouseEvents = !over }
-
-        // The page reports its position every 100ms. Silence means the web
-        // content process died (the window goes blank but stays up) or the
-        // script wedged — reload rather than leaving an empty screen.
-        if ready, Date().timeIntervalSince(lastRectAt) > 5 {
-            lastRectAt = Date()
-            hotRect = .zero
-            panel.ignoresMouseEvents = true
-            webView?.loadHTMLString(html(), baseURL: nil)
+    private func teardown() {
+        timer?.invalidate(); timer = nil
+        for s in screens {
+            s.panel.orderOut(nil)
+            s.web.configuration.userContentController.removeAllUserScripts()
+            s.web.configuration.userContentController.removeScriptMessageHandler(forName: "pulse")
         }
-    }
-
-    /// One window spanning every display, so the character can walk from one
-    /// screen to the next. visibleFrame keeps it out of the menu bar and off
-    /// the Dock — it walks along the top of the Dock instead of under it.
-    private static func spanFrame() -> NSRect {
-        var f = NSRect.zero
-        for s in NSScreen.screens { f = f.isEmpty ? s.visibleFrame : f.union(s.visibleFrame) }
-        return f.isEmpty ? (NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)) : f
+        screens.removeAll()
+        active = 0
     }
 
     private func build() {
-        let frame = Self.spanFrame()
+        for screen in NSScreen.screens {
+            let frame = screen.visibleFrame
 
-        let cfg = WKWebViewConfiguration()
-        let ucc = WKUserContentController()
-        // buddy.html is written for a VS Code webview; give it the same tiny API.
-        ucc.addUserScript(WKUserScript(source: """
-            window.acquireVsCodeApi = function () {
-              return { postMessage: function (m) { window.webkit.messageHandlers.pulse.postMessage(m); },
-                       getState: function () { return null; }, setState: function () {} };
-            };
-            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        // Report where the character is, so only that rectangle catches clicks.
-        ucc.addUserScript(WKUserScript(source: """
-            (function () {
-              function report() {
-                var el = document.getElementById('char');
-                if (el) {
-                  var r = el.getBoundingClientRect();
-                  window.webkit.messageHandlers.pulse.postMessage(
-                    { type: 'rect', x: r.left, y: r.top, w: r.width, h: r.height });
-                }
-                setTimeout(report, 100);
-              }
-              window.addEventListener('load', report);
-            })();
-            """, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
-        ucc.add(self, name: "pulse")
-        cfg.userContentController = ucc
+            let cfg = WKWebViewConfiguration()
+            let ucc = WKUserContentController()
+            // buddy.html is written for a VS Code webview; give it the same tiny API.
+            ucc.addUserScript(WKUserScript(source: """
+                window.acquireVsCodeApi = function () {
+                  return { postMessage: function (m) { window.webkit.messageHandlers.pulse.postMessage(m); },
+                           getState: function () { return null; }, setState: function () {} };
+                };
+                """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            // Report where the character is: this drives click-through and tells
+            // us when it is standing still (a good moment to change screens).
+            ucc.addUserScript(WKUserScript(source: """
+                (function () {
+                  function report() {
+                    var el = document.getElementById('char');
+                    if (el) {
+                      var r = el.getBoundingClientRect();
+                      window.webkit.messageHandlers.pulse.postMessage(
+                        { type: 'rect', x: r.left, y: r.top, w: r.width, h: r.height });
+                    }
+                    setTimeout(report, 100);
+                  }
+                  window.addEventListener('load', report);
+                })();
+                """, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            ucc.add(self, name: "pulse")
+            cfg.userContentController = ucc
 
-        let web = WKWebView(frame: NSRect(origin: .zero, size: frame.size), configuration: cfg)
-        web.navigationDelegate = self
-        web.setValue(false, forKey: "drawsBackground")      // transparent over the desktop
-        if #available(macOS 12.0, *) { web.underPageBackgroundColor = .clear }
-        web.autoresizingMask = [.width, .height]
-        web.loadHTMLString(html(), baseURL: nil)
+            let web = WKWebView(frame: NSRect(origin: .zero, size: frame.size), configuration: cfg)
+            web.navigationDelegate = self
+            web.setValue(false, forKey: "drawsBackground")      // transparent over the desktop
+            if #available(macOS 12.0, *) { web.underPageBackgroundColor = .clear }
+            web.autoresizingMask = [.width, .height]
+            web.loadHTMLString(html(), baseURL: nil)
 
-        let view = PassthroughView(frame: NSRect(origin: .zero, size: frame.size))
-        view.addSubview(web)
+            let view = PassthroughView(frame: NSRect(origin: .zero, size: frame.size))
+            view.addSubview(web)
 
-        // A non-activating panel never steals focus from the app you are using.
-        let p = NSPanel(contentRect: frame,
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = false
-        // A window only lets clicks reach the app underneath when it ignores
-        // mouse events outright — returning nil from hitTest is not enough, it
-        // just makes the click land nowhere. So the window is click-through by
-        // default and only becomes clickable while the cursor is over the
-        // character (see followCursor).
-        p.ignoresMouseEvents = true
-        p.level = .floating                                   // above ordinary windows
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        p.isFloatingPanel = true
-        p.hidesOnDeactivate = false
-        p.contentView = view
-        p.setFrame(frame, display: true)
+            // A non-activating panel never steals focus from the app you are using.
+            let p = NSPanel(contentRect: frame,
+                            styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+            p.isOpaque = false
+            p.backgroundColor = .clear
+            p.hasShadow = false
+            // A window only lets clicks reach the app underneath when it ignores
+            // mouse events outright — returning nil from hitTest is not enough,
+            // it just makes the click land nowhere. Click-through by default;
+            // clickable only while the cursor is over the character.
+            p.ignoresMouseEvents = true
+            p.level = .floating
+            p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+            p.isFloatingPanel = true
+            p.hidesOnDeactivate = false
+            p.contentView = view
+            p.setFrame(frame, display: true)
 
-        panel = p; webView = web; container = view
+            screens.append(BuddyScreen(panel: p, web: web, container: view))
+        }
+        active = min(active, max(0, screens.count - 1))
 
-        // NSEvent.mouseLocation needs no permissions and no event stream, so a
-        // small poll is the cheapest way to know when the cursor is over the
-        // character without intercepting anyone else's clicks.
-        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.followCursor() }
+        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
-        cursorTimer = t
+        timer = t
 
-        // Follow display changes (resolution, arrangement, a screen unplugged).
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self, let panel = self.panel else { return }
-            let f = Self.spanFrame()
-            panel.setFrame(f, display: true)
-            self.webView?.frame = NSRect(origin: .zero, size: f.size)
-            self.container?.frame = NSRect(origin: .zero, size: f.size)
+            // A display was added, removed or rearranged: rebuild the panels so
+            // each still matches exactly one screen.
+            guard let self, !self.screens.isEmpty else { return }
+            self.reload()
         }
+    }
+
+    // MARK: Per-frame housekeeping
+
+    private func tick() {
+        guard isVisible, screens.indices.contains(active) else { return }
+        let s = screens[active]
+
+        // Clickable only while the cursor is actually on the character.
+        let over = !s.hotRect.isEmpty && s.panel.convertToScreen(s.hotRect).contains(NSEvent.mouseLocation)
+        if s.panel.ignoresMouseEvents == over { s.panel.ignoresMouseEvents = !over }
+
+        // The page reports its position every 100ms. Silence means the web
+        // content process died (window stays up but blank) or the script
+        // wedged — reload rather than leaving an empty screen.
+        if s.ready, Date().timeIntervalSince(s.lastRectAt) > 5 {
+            s.lastRectAt = Date()
+            s.hotRect = .zero
+            s.panel.ignoresMouseEvents = true
+            s.web.loadHTMLString(html(), baseURL: nil)
+            return
+        }
+
+        guard screens.count > 1 else { return }
+        if Date() >= nextMigration { migrationDue = true }
+        // Change screens while the character is standing still, so it reads as
+        // wandering off rather than teleporting mid-stride. Don't wait forever.
+        let stillFor = Date().timeIntervalSince(s.stillSince)
+        if migrationDue, stillFor > 0.8 || Date().timeIntervalSince(nextMigration) > 25 {
+            migrate()
+        }
+    }
+
+    private func scheduleMigration() {
+        migrationDue = false
+        // `defaults write com.warroom.claude-pulse buddyMigrateSeconds -float 20`
+        // pins the interval (handy for testing, or if you want a livelier buddy).
+        let fixed = UserDefaults.standard.object(forKey: "buddyMigrateSeconds") as? Double ?? 0
+        nextMigration = Date().addingTimeInterval(fixed > 0 ? fixed : Double.random(in: 45...150))
+    }
+
+    /// Walk the buddy over to the next screen, entering from the facing edge.
+    private func migrate() {
+        guard screens.count > 1, screens.indices.contains(active) else { return }
+        let from = screens[active]
+        let next = (active + 1) % screens.count
+        let to = screens[next]
+
+        // Enter from the side nearest the screen it came from.
+        let entersFromLeft = to.panel.frame.minX >= from.panel.frame.minX
+        let entryX = entersFromLeft ? 8 : Int(to.panel.frame.width) - 100
+        // `x` is buddy.html's own position variable (a top-level binding, so it
+        // is reachable here). If the name ever changes this simply no-ops and
+        // the character keeps whatever position it had.
+        to.web.evaluateJavaScript("try { x = \(entryX) } catch (e) {}")
+
+        to.panel.alphaValue = 0
+        to.panel.orderFrontRegardless()
+        active = next
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.35
+            to.panel.animator().alphaValue = 1
+            from.panel.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            from.panel.orderOut(nil)
+            from.panel.alphaValue = 1
+            from.panel.ignoresMouseEvents = true
+            self?.post0ToActive()
+        }
+        scheduleMigration()
     }
 
     // MARK: Content
@@ -230,49 +300,56 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else { return }
         lastPayload = json
-        guard ready, let web = webView else { return }
-        web.evaluateJavaScript("window.dispatchEvent(new MessageEvent('message',{data:\(json)}))")
+        post0ToActive()
+    }
+
+    private func post0ToActive() {
+        guard screens.indices.contains(active) else { return }
+        let s = screens[active]
+        guard s.ready else { return }
+        s.web.evaluateJavaScript("window.dispatchEvent(new MessageEvent('message',{data:\(lastPayload)}))")
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        ready = true
-        lastRectAt = Date()
-        post0(lastPayload)
+        guard let s = screens.first(where: { $0.web === webView }) else { return }
+        s.ready = true
+        s.lastRectAt = Date()
+        webView.evaluateJavaScript("window.dispatchEvent(new MessageEvent('message',{data:\(lastPayload)}))")
     }
 
     /// The web content process can be killed under memory pressure; without
     /// this the window simply goes empty and the buddy "disappears".
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        ready = false
-        hotRect = .zero
-        panel?.ignoresMouseEvents = true
+        guard let s = screens.first(where: { $0.web === webView }) else { return }
+        s.ready = false
+        s.hotRect = .zero
+        s.panel.ignoresMouseEvents = true
         webView.loadHTMLString(html(), baseURL: nil)
-    }
-
-    private func post0(_ json: String) {
-        webView?.evaluateJavaScript("window.dispatchEvent(new MessageEvent('message',{data:\(json)}))")
     }
 
     // MARK: Messages from the page
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any] else { return }
+        guard let body = message.body as? [String: Any],
+              let web = message.webView,
+              let s = screens.first(where: { $0.web === web }) else { return }
         if body["type"] as? String == "rect",
            let x = body["x"] as? Double, let y = body["y"] as? Double,
-           let w = body["w"] as? Double, let h = body["h"] as? Double,
-           let container {
-            lastRectAt = Date()
+           let w = body["w"] as? Double, let h = body["h"] as? Double {
+            s.lastRectAt = Date()
+            if abs(x - s.lastX) > 1 { s.lastX = x; s.stillSince = Date() }
             // CSS coordinates (top-left origin) → AppKit view coordinates.
             let pad: CGFloat = 4
-            let r = NSRect(x: x - pad, y: container.bounds.height - y - h - pad,
+            let r = NSRect(x: x - pad, y: s.container.bounds.height - y - h - pad,
                            width: w + pad * 2, height: h + pad * 2)
-            hotRect = r
-            container.hotRect = r
+            s.hotRect = r
+            s.container.hotRect = r
         }
     }
 }
 
-/// Lets every click through to the app underneath, except over `hotRect`.
+/// Belt and braces alongside `ignoresMouseEvents`: even when the panel is
+/// accepting events, only the character's own rectangle is a target.
 final class PassthroughView: NSView {
     var hotRect: NSRect = .zero
 
