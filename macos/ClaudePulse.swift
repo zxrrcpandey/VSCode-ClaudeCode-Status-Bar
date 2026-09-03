@@ -1,0 +1,632 @@
+// Claude Pulse for macOS — a menu bar indicator for Claude Code.
+//
+// Reads the same state files the Claude Pulse hooks already write
+// (~/.claude/claude-pulse/state/*.json), so it needs no API access, no
+// network, and no configuration: install the hooks once and every Claude
+// Code session on this Mac shows up here.
+//
+// Build: ./build.sh   (single file, swiftc, no dependencies)
+
+import AppKit
+import Foundation
+import UserNotifications
+import ServiceManagement
+
+// MARK: - Model
+
+struct Agent {
+    var desc: String?
+    var type: String
+    var state: String
+    var startedAt: Double?
+    var lastSeen: Double?
+    var endedAt: Double?
+    var tools: Int
+    var tool: String?
+    var todosDone: Int?
+    var todosTotal: Int?
+
+    var label: String {
+        let d = desc ?? "(\(type) task)"
+        return d.count > 52 ? String(d.prefix(51)) + "…" : d
+    }
+}
+
+struct Session {
+    var id: String
+    var cwd: String?
+    var state: String
+    var reason: String?
+    var tool: String?
+    var startedAt: Double?
+    var endedAt: Double?
+    var waitingSince: Double?
+    var confirmedAt: Double?
+    /// nil means the state file came from a hook older than 0.10.1 — that is
+    /// "no information", not "unconfirmed"; see effectiveState().
+    var waitingConfirmed: Bool?
+    var hasConfirmedKey: Bool
+    var updatedAt: Double
+    var todosDone: Int?
+    var todosTotal: Int?
+    var todosActive: String?
+    var agents: [Agent]
+
+    var project: String {
+        if let c = cwd, !c.isEmpty { return (c as NSString).lastPathComponent }
+        return String(id.prefix(8))
+    }
+
+    var runningAgents: [Agent] {
+        let now = Date().timeIntervalSince1970 * 1000
+        return agents
+            .filter { $0.state == "running" && now - ($0.lastSeen ?? $0.startedAt ?? 0) < 15 * 60_000 }
+            .sorted { ($0.startedAt ?? 0) < ($1.startedAt ?? 0) }
+    }
+}
+
+enum Display: String {
+    case idle, working, waiting, done, error
+
+    /// Lower sorts first: the most urgent session drives the menu bar.
+    var rank: Int {
+        switch self {
+        case .waiting: return 0
+        case .working: return 1
+        case .error:   return 2
+        case .done:    return 3
+        case .idle:    return 4
+        }
+    }
+}
+
+// MARK: - Settings (mirrors the VS Code extension's defaults)
+
+struct Settings {
+    var doneFadeMs: Double = 15_000
+    var waitTimeoutMs: Double = 45_000       // 0 => .infinity
+    var provisionalMs: Double = .infinity    // 0 => never show unconfirmed waits
+    var notifyOnInput: Bool = true
+
+    static func load() -> Settings {
+        var s = Settings()
+        let d = UserDefaults.standard
+        if d.object(forKey: "doneFadeSeconds") != nil { s.doneFadeMs = d.double(forKey: "doneFadeSeconds") * 1000 }
+        if d.object(forKey: "waitTimeoutSeconds") != nil {
+            let v = d.double(forKey: "waitTimeoutSeconds")
+            s.waitTimeoutMs = v > 0 ? v * 1000 : .infinity
+        }
+        if d.object(forKey: "provisionalWaitSeconds") != nil {
+            let v = d.double(forKey: "provisionalWaitSeconds")
+            s.provisionalMs = v > 0 ? v * 1000 : .infinity
+        }
+        if d.object(forKey: "notifyOnInput") != nil { s.notifyOnInput = d.bool(forKey: "notifyOnInput") }
+        return s
+    }
+}
+
+// MARK: - State reading
+
+final class StateReader {
+    static let stateDir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".claude/claude-pulse/state")
+
+    private static let workingStaleMs: Double = 60 * 60_000
+    private static let staleMs: Double = 4 * 60 * 60_000
+
+    static func read() -> [Session] {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: stateDir,
+                                                                      includingPropertiesForKeys: nil) else { return [] }
+        let now = Date().timeIntervalSince1970 * 1000
+        var out: [Session] = []
+        for url in files where url.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: url),
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let state = obj["state"] as? String else { continue }   // partial write: skip
+            let updated = (obj["updated_at"] as? Double) ?? 0
+            let age = now - updated
+            // Dead session (crashed window, killed process): ignore. The VS Code
+            // extension owns cleanup; deleting here could race its atomic writes.
+            if age > staleMs { continue }
+            if state == "working" && age > workingStaleMs { continue }
+
+            var agents: [Agent] = []
+            if let raw = obj["agents"] as? [String: Any] {
+                for (_, v) in raw {
+                    guard let a = v as? [String: Any] else { continue }
+                    let todos = a["todos"] as? [String: Any]
+                    agents.append(Agent(
+                        desc: a["desc"] as? String,
+                        type: (a["type"] as? String) ?? "agent",
+                        state: (a["state"] as? String) ?? "running",
+                        startedAt: a["started_at"] as? Double,
+                        lastSeen: a["last_seen"] as? Double,
+                        endedAt: a["ended_at"] as? Double,
+                        tools: (a["tools"] as? Int) ?? 0,
+                        tool: a["tool"] as? String,
+                        todosDone: todos?["done"] as? Int,
+                        todosTotal: todos?["total"] as? Int))
+                }
+            }
+            let todos = obj["todos"] as? [String: Any]
+            out.append(Session(
+                id: (obj["session_id"] as? String) ?? url.deletingPathExtension().lastPathComponent,
+                cwd: obj["cwd"] as? String,
+                state: state,
+                reason: obj["reason"] as? String,
+                tool: obj["tool"] as? String,
+                startedAt: obj["started_at"] as? Double,
+                endedAt: obj["ended_at"] as? Double,
+                waitingSince: obj["waiting_since"] as? Double,
+                confirmedAt: obj["confirmed_at"] as? Double,
+                waitingConfirmed: obj["waiting_confirmed"] as? Bool,
+                hasConfirmedKey: obj.keys.contains("waiting_confirmed"),
+                updatedAt: updated,
+                todosDone: todos?["done"] as? Int,
+                todosTotal: todos?["total"] as? Int,
+                todosActive: todos?["active"] as? String,
+                agents: agents))
+        }
+        return out
+    }
+
+    /// Mirrors extension.js effectiveState() exactly — see scripts/test-waiting.js.
+    static func effectiveState(_ s: Session, _ now: Double, _ cfg: Settings) -> Display {
+        if s.state == "done" || s.state == "error" {
+            if now - (s.endedAt ?? s.updatedAt) > cfg.doneFadeMs { return .idle }
+            return s.state == "error" ? .error : .done
+        }
+        if s.state == "waiting" {
+            // No waiting_confirmed key at all = pre-0.10.1 hook: fall back to the
+            // old semantics rather than silently hiding every prompt.
+            let confirmed = s.hasConfirmedKey ? (s.waitingConfirmed ?? false) : true
+            let age = now - (s.waitingSince ?? s.updatedAt)
+            if !confirmed && age < cfg.provisionalMs { return .working }
+            // The timeout exists only because approving fires no event, so it is
+            // measured from the confirmation and never applied to questions.
+            if s.reason != "question" && s.reason != "agent" {
+                let confAge = now - (s.confirmedAt ?? s.waitingSince ?? s.updatedAt)
+                if confAge > cfg.waitTimeoutMs { return .working }
+            }
+            return .waiting
+        }
+        return Display(rawValue: s.state) ?? .idle
+    }
+}
+
+// MARK: - Formatting
+
+enum Fmt {
+    static func elapsed(_ ms: Double) -> String {
+        let s = max(0, Int(ms / 1000))
+        return "\(s / 60):" + String(format: "%02d", s % 60)
+    }
+    static func tokens(_ n: Double) -> String {
+        if n < 1000 { return String(Int(n)) }
+        if n < 1_000_000 { return String(format: n < 10_000 ? "%.1fk" : "%.0fk", n / 1000) }
+        return String(format: "%.2fM", n / 1_000_000)
+    }
+    static func bar(done: Int, total: Int) -> String {
+        guard total > 0 else { return "" }
+        if total <= 12 { return String(repeating: "▰", count: done) + String(repeating: "▱", count: total - done) }
+        let filled = Int((Double(done) / Double(total) * 10).rounded())
+        return String(repeating: "▰", count: filled) + String(repeating: "▱", count: 10 - filled)
+    }
+}
+
+// MARK: - Token usage (reuses the bundled usage-scan.js)
+
+final class UsageScanner {
+    private(set) var byDayModel: [String: [String: Double]] = [:]   // date -> model -> output tokens
+    private(set) var bySession: [String: Double] = [:]              // session -> output tokens
+    private var busy = false
+    private let script: String?
+    private let node: String?
+
+    init() {
+        script = Bundle.main.path(forResource: "usage-scan", ofType: "js")
+        // GUI apps do not inherit the shell PATH, so look in the usual places.
+        var found: String? = nil
+        var candidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
+        let nvm = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".nvm/versions/node")
+        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvm.path) {
+            for v in versions.sorted().reversed() { candidates.append(nvm.appendingPathComponent("\(v)/bin/node").path) }
+        }
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) { found = c; break }
+        node = found
+    }
+
+    var available: Bool { script != nil && node != nil }
+
+    func refresh(_ done: @escaping () -> Void) {
+        guard !busy, let script, let node else { return }
+        busy = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: node)
+            p.arguments = [script]
+            let pipe = Pipe()
+            p.standardOutput = pipe
+            p.standardError = FileHandle.nullDevice
+            var out = Data()
+            do {
+                try p.run()
+                out = pipe.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+            } catch { }
+            var days: [String: [String: Double]] = [:]
+            var sess: [String: Double] = [:]
+            if let obj = (try? JSONSerialization.jsonObject(with: out)) as? [String: Any] {
+                if let byDay = obj["byDay"] as? [String: [String: Any]] {
+                    for (date, models) in byDay {
+                        var m: [String: Double] = [:]
+                        for (model, agg) in models {
+                            if model == "<synthetic>" { continue }
+                            if let a = agg as? [String: Any], let o = a["out"] as? Double, o > 0 { m[model] = o }
+                        }
+                        if !m.isEmpty { days[date] = m }
+                    }
+                }
+                if let bs = obj["bySession"] as? [String: [String: Any]] {
+                    for (sid, models) in bs {
+                        var total: Double = 0
+                        for (model, agg) in models where model != "<synthetic>" {
+                            if let a = agg as? [String: Any], let o = a["out"] as? Double { total += o }
+                        }
+                        sess[sid] = total
+                    }
+                }
+            }
+            DispatchQueue.main.async {
+                self?.byDayModel = days
+                self?.bySession = sess
+                self?.busy = false
+                done()
+            }
+        }
+    }
+
+    private func key(_ daysAgo: Int) -> String {
+        let d = Calendar.current.date(byAdding: .day, value: -daysAgo, to: Date()) ?? Date()
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: d)
+    }
+
+    /// Output tokens per model over the last `days` days (today = 1).
+    func sum(days: Int) -> [(model: String, out: Double)] {
+        var totals: [String: Double] = [:]
+        for i in 0..<days {
+            for (model, out) in byDayModel[key(i)] ?? [:] { totals[model, default: 0] += out }
+        }
+        return totals.sorted { $0.value > $1.value }.map { (shortModel($0.key), $0.value) }
+    }
+
+    private func shortModel(_ m: String) -> String {
+        var s = m.hasPrefix("claude-") ? String(m.dropFirst(7)) : m
+        if let r = s.range(of: "-20[0-9]{6}$", options: .regularExpression) { s.removeSubrange(r) }
+        return s
+    }
+}
+
+// MARK: - App
+
+@main
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    private var statusItem: NSStatusItem!
+    private var timer: Timer?
+    private var dirSource: DispatchSourceFileSystemObject?
+    private var dirFD: CInt = -1
+    private var sessions: [Session] = []
+    private var cfg = Settings.load()
+    private let usage = UsageScanner()
+    private var spinnerFrame = 0
+    private var lastNotifiedWaiting: Set<String> = []
+    private var menuOpen = false
+    private var usageTick = 0
+
+    private let spinner = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
+
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)   // menu bar only, no Dock icon
+        app.run()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+
+        let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+
+        try? FileManager.default.createDirectory(at: StateReader.stateDir, withIntermediateDirectories: true)
+        watchStateDir()
+
+        if cfg.notifyOnInput {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
+        if usage.available { usage.refresh { [weak self] in self?.render() } }
+
+        refresh()
+        // 250ms keeps the spinner alive and elapsed times honest; the work is
+        // reading a handful of small files.
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            self?.tick()
+        }
+        RunLoop.main.add(timer!, forMode: .common)
+    }
+
+    // MARK: Data
+
+    private func tick() {
+        spinnerFrame = (spinnerFrame + 1) % spinner.count
+        usageTick += 1
+        if usageTick % 120 == 0, usage.available { usage.refresh { [weak self] in self?.render() } }
+        refresh()
+    }
+
+    private func refresh() {
+        cfg = Settings.load()
+        sessions = StateReader.read()
+        render()
+        if menuOpen, let menu = statusItem.menu { rebuild(menu) }
+        notifyIfNeeded()
+    }
+
+    private func watchStateDir() {
+        dirFD = open(StateReader.stateDir.path, O_EVTONLY)
+        guard dirFD >= 0 else { return }
+        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: dirFD,
+                                                            eventMask: [.write, .delete, .rename],
+                                                            queue: .main)
+        src.setEventHandler { [weak self] in self?.refresh() }
+        src.setCancelHandler { [weak self] in
+            if let fd = self?.dirFD, fd >= 0 { close(fd) }
+        }
+        src.resume()
+        dirSource = src
+    }
+
+    // MARK: Menu bar item
+
+    private func primary() -> (Session, Display)? {
+        let now = Date().timeIntervalSince1970 * 1000
+        var best: (Session, Display)?
+        for s in sessions {
+            let st = StateReader.effectiveState(s, now, cfg)
+            guard let b = best else { best = (s, st); continue }
+            let cur = StateReader.effectiveState(b.0, now, cfg)
+            if st.rank < cur.rank || (st.rank == cur.rank && s.updatedAt > b.0.updatedAt) { best = (s, st) }
+        }
+        return best
+    }
+
+    private func render() {
+        guard let button = statusItem.button else { return }
+        let now = Date().timeIntervalSince1970 * 1000
+        guard let (s, st) = primary() else {
+            button.attributedTitle = NSAttributedString(string: "✳", attributes: [
+                .foregroundColor: NSColor.tertiaryLabelColor,
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)])
+            button.toolTip = "No Claude Code session running"
+            return
+        }
+
+        let busy = sessions.filter { s in
+            let e = StateReader.effectiveState(s, now, cfg)
+            return e == .working || e == .waiting
+        }.count
+        let suffix = busy > 1 ? " ×\(busy)" : ""
+
+        var text: String
+        var color = NSColor.labelColor
+        switch st {
+        case .waiting:
+            let what = s.reason == "question" ? "question" : s.reason == "agent" ? "agent needs you" : "needs input"
+            text = "🔔 \(what)\(suffix)"
+            color = .systemOrange
+        case .working:
+            var t = "\(spinner[spinnerFrame]) "
+            if let d = s.todosDone, let total = s.todosTotal, total > 0 {
+                t += "\(d)/\(total) \(Fmt.bar(done: d, total: total))"
+            } else if let started = s.startedAt {
+                t += Fmt.elapsed(now - started)
+            } else {
+                t += "working"
+            }
+            let n = s.runningAgents.count
+            if n > 0 { t += " · \(n)⚙" }
+            text = t + suffix
+        case .done:
+            let dur = (s.startedAt != nil && s.endedAt != nil) ? " " + Fmt.elapsed(s.endedAt! - s.startedAt!) : ""
+            text = "✓\(dur)\(suffix)"
+            color = .systemGreen
+        case .error:
+            text = "⚠ error\(suffix)"
+            color = .systemRed
+        case .idle:
+            text = "✳"
+            color = .tertiaryLabelColor
+        }
+
+        button.attributedTitle = NSAttributedString(string: text, attributes: [
+            .foregroundColor: color,
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)])
+        button.toolTip = "\(s.project) — \(st.rawValue)"
+    }
+
+    // MARK: Dropdown
+
+    func menuWillOpen(_ menu: NSMenu) {
+        menuOpen = true
+        if usage.available { usage.refresh { [weak self] in self?.render() } }
+        rebuild(menu)
+    }
+    func menuDidClose(_ menu: NSMenu) { menuOpen = false }
+
+    private func header(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.secondaryLabelColor])
+        item.isEnabled = false
+        return item
+    }
+
+    private func detail(_ title: String, indent: Int = 1) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor])
+        item.indentationLevel = indent
+        item.isEnabled = false
+        return item
+    }
+
+    private func rebuild(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let now = Date().timeIntervalSince1970 * 1000
+
+        if sessions.isEmpty {
+            menu.addItem(header("No Claude Code sessions"))
+            menu.addItem(detail("Start Claude Code and it will appear here."))
+        } else {
+            let ordered = sessions.sorted {
+                let a = StateReader.effectiveState($0, now, cfg), b = StateReader.effectiveState($1, now, cfg)
+                return a.rank != b.rank ? a.rank < b.rank : $0.updatedAt > $1.updatedAt
+            }
+            for s in ordered {
+                let st = StateReader.effectiveState(s, now, cfg)
+                let icon = ["idle": "✳", "working": "⟳", "waiting": "🔔", "done": "✓", "error": "⚠"][st.rawValue] ?? "✳"
+                var line = "\(icon)  \(s.project) — \(st.rawValue)"
+                if st == .working, let started = s.startedAt { line += " \(Fmt.elapsed(now - started))" }
+                let item = NSMenuItem(title: line, action: #selector(openProject(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = s.cwd
+                item.toolTip = s.cwd
+                menu.addItem(item)
+
+                if st == .working {
+                    if let d = s.todosDone, let t = s.todosTotal, t > 0 {
+                        var l = "\(d)/\(t) \(Fmt.bar(done: d, total: t))"
+                        if let a = s.todosActive { l += "  \(a)" }
+                        menu.addItem(detail(l))
+                    } else if let tool = s.tool {
+                        menu.addItem(detail("using \(tool)"))
+                    }
+                }
+                if st == .waiting {
+                    menu.addItem(detail(s.reason == "question" ? "waiting for your answer"
+                                        : s.reason == "agent" ? "a subagent needs your input"
+                                        : "permission prompt open" + (s.tool.map { " · \($0)" } ?? "")))
+                }
+                let running = s.runningAgents
+                if !running.isEmpty {
+                    menu.addItem(detail("\(running.count) agent\(running.count == 1 ? "" : "s") working:"))
+                    for a in running.prefix(8) {
+                        var l = "· \(a.type) — \(a.label)"
+                        if let st = a.startedAt { l += "  \(Fmt.elapsed(now - st))" }
+                        if let d = a.todosDone, let t = a.todosTotal, t > 0 { l += " · \(d)/\(t)" }
+                        else if a.tools > 0 { l += " · \(a.tools) tool\(a.tools == 1 ? "" : "s")" }
+                        if let tool = a.tool { l += " · \(tool)" }
+                        menu.addItem(detail(l, indent: 2))
+                    }
+                    if running.count > 8 { menu.addItem(detail("…and \(running.count - 8) more", indent: 2)) }
+                }
+                if let out = usage.bySession[s.id], out > 0 {
+                    menu.addItem(detail("\(Fmt.tokens(out)) tokens out this session"))
+                }
+                menu.addItem(NSMenuItem.separator())
+            }
+        }
+
+        if usage.available {
+            let today = usage.sum(days: 1)
+            let week = usage.sum(days: 7)
+            if !today.isEmpty || !week.isEmpty {
+                menu.addItem(header("TOKEN USAGE (output)"))
+                if !today.isEmpty {
+                    menu.addItem(detail("today: " + today.map { "\($0.model) \(Fmt.tokens($0.out))" }.joined(separator: " · ")))
+                }
+                if !week.isEmpty {
+                    let total = week.reduce(0) { $0 + $1.out }
+                    menu.addItem(detail("last 7 days: \(Fmt.tokens(total)) — " + week.map { $0.model }.joined(separator: ", ")))
+                }
+                menu.addItem(detail("plan limits: run /usage inside Claude Code"))
+                menu.addItem(NSMenuItem.separator())
+            }
+        }
+
+        let notify = NSMenuItem(title: "Notify when Claude needs input",
+                                action: #selector(toggleNotify(_:)), keyEquivalent: "")
+        notify.target = self
+        notify.state = cfg.notifyOnInput ? .on : .off
+        menu.addItem(notify)
+
+        let login = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
+        login.target = self
+        login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        menu.addItem(login)
+
+        let reset = NSMenuItem(title: "Reset Session States", action: #selector(resetStates(_:)), keyEquivalent: "")
+        reset.target = self
+        menu.addItem(reset)
+
+        menu.addItem(NSMenuItem.separator())
+        let quit = NSMenuItem(title: "Quit Claude Pulse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(quit)
+    }
+
+    // MARK: Actions
+
+    @objc private func openProject(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    @objc private func toggleNotify(_ sender: NSMenuItem) {
+        let on = !(cfg.notifyOnInput)
+        UserDefaults.standard.set(on, forKey: "notifyOnInput")
+        cfg.notifyOnInput = on
+        if on { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in } }
+    }
+
+    @objc private func toggleLogin(_ sender: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
+            else { try SMAppService.mainApp.register() }
+        } catch { NSSound.beep() }
+    }
+
+    @objc private func resetStates(_ sender: NSMenuItem) {
+        if let files = try? FileManager.default.contentsOfDirectory(at: StateReader.stateDir, includingPropertiesForKeys: nil) {
+            for f in files where f.pathExtension == "json" { try? FileManager.default.removeItem(at: f) }
+        }
+        refresh()
+    }
+
+    // MARK: Notifications
+
+    private func notifyIfNeeded() {
+        guard cfg.notifyOnInput else { lastNotifiedWaiting.removeAll(); return }
+        let now = Date().timeIntervalSince1970 * 1000
+        var waitingNow: Set<String> = []
+        for s in sessions where StateReader.effectiveState(s, now, cfg) == .waiting {
+            waitingNow.insert(s.id)
+            if lastNotifiedWaiting.contains(s.id) { continue }
+            let c = UNMutableNotificationContent()
+            c.title = "Claude needs you — \(s.project)"
+            c.body = s.reason == "question" ? "Claude has a question."
+                : s.reason == "agent" ? "A subagent is waiting on your input."
+                : "A permission prompt is waiting."
+            c.sound = .default
+            let req = UNNotificationRequest(identifier: "pulse-\(s.id)-\(Int(now))", content: c, trigger: nil)
+            UNUserNotificationCenter.current().add(req)
+        }
+        lastNotifiedWaiting = waitingNow
+    }
+}

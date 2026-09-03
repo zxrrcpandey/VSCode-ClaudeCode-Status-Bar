@@ -14,6 +14,29 @@ A tiny VS Code status bar indicator that always tells you what Claude Code is do
 **100% local, zero cost.** The hooks run a small local Node script; the extension watches a
 state file. No API calls, no tokens, no network.
 
+## macOS menu bar app
+
+The same indicator, outside the editor: a native menu bar app (`macos/`) that reads the very
+same state files, so it shows **every** Claude Code session on the Mac — including ones in
+other windows, other editors, or a plain terminal.
+
+```sh
+cd macos && ./build.sh --install     # builds ClaudePulse.app and launches it
+```
+
+- Menu bar: `⣾ 4:46 · 3⚙` while working (spinner, elapsed, running agents), `3/7 ▰▰▰▱▱▱▱`
+  when Claude is following a checklist, an orange `🔔 needs input` when you are actually
+  needed, `✓ 2:14` on completion, `⚠ error` when a response dies. `×N` means several
+  sessions are busy.
+- Drop-down: every session with its project, state, current tool and checklist, each running
+  subagent (task, type, elapsed, tools), and token usage for today and the last 7 days.
+  Click a session to open its folder.
+- **Notifies you** when a session needs input — the point of a menu bar app is that you can
+  be looking somewhere else. Toggle it in the menu, along with *Open at Login*.
+- Native Swift, no Xcode project and no dependencies: `build.sh` compiles a universal
+  binary with `swiftc` and assembles the `.app`. Same waiting-state rules as the extension
+  (see `scripts/test-waiting.js`).
+
 ## Subagents
 
 When Claude spawns subagents (the Agent tool, workflows, parallel reviewers), the indicator
