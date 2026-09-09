@@ -23,6 +23,8 @@ final class BuddyScreen {
     let web: WKWebView
     let container: PassthroughView
     var hotRect: NSRect = .zero
+    /// Last reported character box in the page's own CSS pixels (top-left origin).
+    var cssRect: NSRect = .zero
     var lastRectAt = Date.distantPast
     var ready = false
     /// Set while the character has not moved — a natural moment to migrate.
@@ -40,8 +42,11 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private var active = 0
     private var lastPayload: String = "{}"
     private var timer: Timer?
+    private var screenObserver: NSObjectProtocol?
     private var nextMigration = Date.distantFuture
     private var migrationDue = false
+    private var dueSince = Date.distantFuture
+    private var finishing = false
     private var lastHoverPause = Date.distantPast
     /// How close the cursor must get before the character stops to be clicked.
     /// `defaults write com.warroom.claude-pulse buddyNoticeRadius -float 200`
@@ -75,6 +80,12 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
     static let characters = ["critter", "robot", "cat", "pup", "turtle", "snail", "bee", "dragon", "ghost"]
 
+    /// Character size, as a page zoom (Small 0.7 … Huge 2.4 from the menu).
+    static var zoom: CGFloat {
+        let v = UserDefaults.standard.object(forKey: "buddyZoom") as? Double ?? 1.0
+        return CGFloat(max(0.3, min(4.0, v > 0 ? v : 1.0)))
+    }
+
     var isVisible: Bool { screens.indices.contains(active) && screens[active].panel.isVisible }
 
     // MARK: Lifecycle
@@ -91,6 +102,7 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     }
 
     func hide() {
+        crossing = nil; finishing = false
         for s in screens { s.panel.orderOut(nil) }
         UserDefaults.standard.set(false, forKey: "buddyVisible")
     }
@@ -103,7 +115,9 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     }
 
     private func teardown() {
+        crossing = nil; finishing = false; migrationDue = false
         timer?.invalidate(); timer = nil
+        if let o = screenObserver { NotificationCenter.default.removeObserver(o); screenObserver = nil }
         for s in screens {
             s.panel.orderOut(nil)
             s.web.configuration.userContentController.removeAllUserScripts()
@@ -147,6 +161,9 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
 
             let web = BuddyWebView(frame: NSRect(origin: .zero, size: frame.size), configuration: cfg)
             web.navigationDelegate = self
+            // Browser-style zoom: the page sees a smaller stage (points / zoom)
+            // and everything in it scales together; positions stay coherent.
+            web.pageZoom = Self.zoom
             web.setValue(false, forKey: "drawsBackground")      // transparent over the desktop
             if #available(macOS 12.0, *) { web.underPageBackgroundColor = .clear }
             web.autoresizingMask = [.width, .height]
@@ -177,12 +194,17 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             screens.append(BuddyScreen(panel: p, web: web, container: view))
         }
         active = min(active, max(0, screens.count - 1))
+        log("screens: " + NSScreen.screens.map { rectStr($0.visibleFrame) }.joined(separator: " | ") + " zoom=\(Self.zoom)")
 
         let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
 
-        NotificationCenter.default.addObserver(
+        // One observer, ever: reload() rebuilds via build(), and without removing
+        // the previous observer every character/size change would stack another,
+        // so a display change would cascade into N rebuilds.
+        if let o = screenObserver { NotificationCenter.default.removeObserver(o) }
+        screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             // A display was added, removed or rearranged: rebuild the panels so
@@ -228,52 +250,114 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         }
 
         guard screens.count > 1 else { return }
-        if Date() >= nextMigration { migrationDue = true }
-        // Change screens while the character is standing still, so it reads as
-        // wandering off rather than teleporting mid-stride. Don't wait forever.
-        let stillFor = Date().timeIntervalSince(s.stillSince)
-        if migrationDue, stillFor > 0.8 || Date().timeIntervalSince(nextMigration) > 25 {
-            migrate()
+        if Date() >= nextMigration, !migrationDue { migrationDue = true; dueSince = Date() }
+        if migrationDue, crossing == nil { beginCrossingIfNear() }
+        if let c = crossing, !finishing {
+            // Arrived at the edge facing the other screen (in the page's own
+            // pixels). The cap is a safety net, not the normal path: crossings
+            // only start near the edge, so this should never fire.
+            let stageW = Double(s.container.bounds.width) / Double(s.web.pageZoom)
+            let atEdge = !s.cssRect.isEmpty &&
+                (c.edge < 0 ? s.cssRect.minX <= 12 : s.cssRect.maxX >= stageW - 12)
+            if atEdge || Date().timeIntervalSince(c.started) > 60 {
+                finishCrossing(c)
+            } else if Date().timeIntervalSince(c.lastSteer) > 1 {
+                steer(c)
+            }
         }
     }
 
     private func scheduleMigration() {
         migrationDue = false
+        dueSince = .distantFuture
+        crossing = nil
+        finishing = false
         // `defaults write com.warroom.claude-pulse buddyMigrateSeconds -float 20`
         // pins the interval (handy for testing, or if you want a livelier buddy).
         let fixed = UserDefaults.standard.object(forKey: "buddyMigrateSeconds") as? Double ?? 0
         nextMigration = Date().addingTimeInterval(fixed > 0 ? fixed : Double.random(in: 45...150))
     }
 
-    /// Walk the buddy over to the next screen, entering from the facing edge.
-    private func migrate() {
+    /// A screen change in progress: head for `edge` (-1 left, +1 right) of the
+    /// active screen, then continue on screen `to` from its opposite edge.
+    private struct Crossing { let to: Int; let edge: Int; let started: Date; var lastSteer: Date }
+    private var crossing: Crossing?
+
+    /// Displays side by side: leave by the edge that faces the other screen.
+    /// Stacked (same x): there is no facing edge, so use whichever is nearer.
+    private func sideBySide(_ a: BuddyScreen, _ b: BuddyScreen) -> Bool {
+        abs(b.panel.frame.minX - a.panel.frame.minX) > 100
+    }
+
+    private func exitEdge(from: BuddyScreen, to: BuddyScreen, stageW: Double) -> Int {
+        if sideBySide(from, to) { return to.panel.frame.minX > from.panel.frame.minX ? 1 : -1 }
+        return Double(from.cssRect.midX) < stageW / 2 ? -1 : 1
+    }
+
+    /// Start a crossing only once the character happens to be near the exit
+    /// edge (it wanders everywhere, so this comes soon enough), so the trip is
+    /// a few seconds of dash/flight rather than a long march that ends in a
+    /// mid-screen teleport when a timeout fires. After a long wait, go anyway.
+    private func beginCrossingIfNear() {
         guard screens.count > 1, screens.indices.contains(active) else { return }
         let from = screens[active]
+        guard !from.cssRect.isEmpty else { return }
         let next = (active + 1) % screens.count
-        let to = screens[next]
+        let stageW = Double(from.container.bounds.width) / Double(from.web.pageZoom)
+        let edge = exitEdge(from: from, to: screens[next], stageW: stageW)
+        let dist = edge < 0 ? Double(from.cssRect.minX) : stageW - Double(from.cssRect.maxX)
+        guard dist < 360 || Date().timeIntervalSince(dueSince) > 180 else { return }
+        let c = Crossing(to: next, edge: edge, started: Date(), lastSteer: .distantPast)
+        crossing = c
+        steer(c)
+        log("crossing: heading to \(edge > 0 ? "right" : "left") edge for screen \(next) (\(Int(dist))px away)")
+    }
 
-        // Enter from the side nearest the screen it came from.
-        let entersFromLeft = to.panel.frame.minX >= from.panel.frame.minX
-        let entryX = entersFromLeft ? 8 : Int(to.panel.frame.width) - 100
-        // `x` is buddy.html's own position variable (a top-level binding, so it
-        // is reachable here). If the name ever changes this simply no-ops and
-        // the character keeps whatever position it had.
-        to.web.evaluateJavaScript("try { x = \(entryX) } catch (e) {}")
+    /// Point the character at the edge. These are buddy.html's own top-level
+    /// variables; if a name ever changes this no-ops and the crossing simply
+    /// happens on the timeout instead.
+    private func steer(_ c: Crossing) {
+        guard screens.indices.contains(active) else { return }
+        crossing?.lastSteer = Date()
+        // buddy.html owns its state; steerToEdge() resets what needs resetting.
+        screens[active].web.evaluateJavaScript("try { steerToEdge(\(c.edge)) } catch (e) {}")
+    }
 
-        to.panel.alphaValue = 0
-        to.panel.orderFrontRegardless()
-        active = next
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.35
-            to.panel.animator().alphaValue = 1
-            from.panel.animator().alphaValue = 0
-        } completionHandler: { [weak self] in
-            from.panel.orderOut(nil)
-            from.panel.alphaValue = 1
-            from.panel.ignoresMouseEvents = true
-            self?.post0ToActive()
+    /// Swap screens with the character continuing from the facing edge at the
+    /// same height — it walks (or flies) off one screen and onto the next.
+    private func finishCrossing(_ c: Crossing) {
+        guard !finishing, screens.count > 1, screens.indices.contains(active), screens.indices.contains(c.to) else {
+            if !finishing { scheduleMigration() }
+            return
         }
-        scheduleMigration()
+        finishing = true                    // single-shot: ticks keep coming while the reply is in flight
+        let from = screens[active]
+        let to = screens[c.to]
+        // Side by side: left by the right edge → enter from the left. Stacked:
+        // enter on the same side it left, so the hop is short, not diagonal.
+        let entersFromLeft = sideBySide(from, to) ? (c.edge > 0) : (c.edge < 0)
+        let entryX = entersFromLeft ? "4" : "wallR(Math.max(120, stage.clientWidth))"
+        let inward = entersFromLeft ? "264" : "wallR(Math.max(120, stage.clientWidth)) - 260"
+        from.web.evaluateJavaScript("(function(){ try { return y } catch (e) { return 0 } })()") { [weak self] res, _ in
+            guard let self else { return }
+            self.finishing = false
+            // A hide()/reload() may have torn everything down while we waited.
+            guard self.crossing != nil,
+                  self.screens.indices.contains(c.to), self.screens[c.to] === to,
+                  self.screens.indices.contains(self.active), self.screens[self.active] === from else {
+                self.crossing = nil
+                return
+            }
+            let y = (res as? Double) ?? 0
+            to.web.evaluateJavaScript("try { enterAt(\(entryX), \(y), \(inward)) } catch (e) {}")
+            to.panel.orderFrontRegardless()
+            self.active = c.to
+            from.panel.orderOut(nil)
+            from.panel.ignoresMouseEvents = true
+            self.post0ToActive()
+            self.log("crossed to screen \(c.to) at y=\(Int(y))")
+            self.scheduleMigration()
+        }
     }
 
     // MARK: Content
@@ -301,12 +385,13 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         raw = raw.replacingOccurrences(of: "{{char}}", with: Self.characters.contains(character) ? character : "critter")
         raw = raw.replacingOccurrences(of: "{{name}}", with: Self.userName())
         // On the desktop there is no panel to draw a floor line or a hint in.
-        // Zoom scales the character while leaving it the whole screen to roam.
-        let zoom = UserDefaults.standard.object(forKey: "buddyZoom") as? Double ?? 1.0
+        // Size is applied with WKWebView.pageZoom, NOT CSS zoom on the sprite:
+        // CSS zoom also scales the element's position offsets, which sent a
+        // 1.6× bee off the right of the screen and left hearts, flowers and
+        // speech bubbles (placed from the logical position) far from it.
         raw = raw.replacingOccurrences(of: "</head>", with: """
             <style>#floor,#hint{display:none!important}
-            html,body{background:transparent!important}
-            #char{zoom:\(zoom)}</style></head>
+            html,body{background:transparent!important}</style></head>
             """)
         return raw
     }
@@ -382,11 +467,14 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             return
         }
         if body["type"] as? String == "rect",
-           let x = body["x"] as? Double, let y = body["y"] as? Double,
-           let w = body["w"] as? Double, let h = body["h"] as? Double {
+           let cx = body["x"] as? Double, let cy = body["y"] as? Double,
+           let cw = body["w"] as? Double, let ch = body["h"] as? Double {
             s.lastRectAt = Date()
-            if abs(x - s.lastX) > 1 { s.lastX = x; s.stillSince = Date() }
-            // CSS coordinates (top-left origin) → AppKit view coordinates.
+            s.cssRect = NSRect(x: cx, y: cy, width: cw, height: ch)
+            if abs(cx - s.lastX) > 1 { s.lastX = cx; s.stillSince = Date() }
+            // CSS pixels → view points (× page zoom), top-left → bottom-left origin.
+            let z = Double(web.pageZoom)
+            let x = cx * z, y = cy * z, w = cw * z, h = ch * z
             let pad: CGFloat = 10
             let r = NSRect(x: x - pad, y: s.container.bounds.height - y - h - pad,
                            width: w + pad * 2, height: h + pad * 2)

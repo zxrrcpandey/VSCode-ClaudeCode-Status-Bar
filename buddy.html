@@ -522,7 +522,9 @@
 
   function pickAirTarget(w) {
     targetX = 20 + Math.random() * span(w);
-    targetY = Math.random() * Math.min(maxApex(), C.scale > 1 ? 220 : 170);
+    // The whole height of wherever it lives — a short editor panel or a full
+    // desktop screen — minus a margin so it doesn't hug the ceiling.
+    targetY = Math.random() * maxApex() * 0.92;
   }
 
   function setLimbs(ts) {
@@ -796,6 +798,39 @@
     if (!gotFirst) wavingUntil = performance.now() + 1500; // hello wave on open
     gotFirst = true;
   });
+
+  // ---- Host hooks (macOS multi-screen crossing) --------------------------
+  // Called by the native host through evaluateJavaScript; unused in VS Code.
+  // Keeping the state reset HERE means the host never has to know which
+  // variables exist — a stale 'flip'/'drop'/airPlan left behind by a hand-off
+  // used to freeze the character at the screen edge.
+  function steerToEdge(edge) {                // -1 = left wall, +1 = right wall
+    const w = Math.max(120, stage.clientWidth);
+    pauseUntil = 0; pointUntil = 0;
+    if (AIR) {
+      airPlan = null; airMode = 'fly';
+      targetX = edge > 0 ? wallR(w) : 4; targetY = y;
+      return;
+    }
+    if (activity === 'climb' || activity === 'leap' || activity === 'hang') {
+      climb = null; leap = null; surfTarget = 0; vy = 0;
+      activity = y > 0.5 ? 'drop' : 'dash';
+    } else if (y <= 0.5) {
+      activity = 'dash'; flip.active = false; hopsLeft = 0;   // hurry, no detours
+    }
+    targetX = edge > 0 ? wallR(w) : 4;
+  }
+  function enterAt(x0, y0, tx) {
+    const w = Math.max(120, stage.clientWidth);
+    x = Math.max(4, Math.min(x0, wallR(w)));
+    y = AIR ? Math.max(0, Math.min(y0, maxApex())) : 0;
+    vy = 0; pauseUntil = 0; pointUntil = 0;
+    climb = null; leap = null; surfTarget = 0; surfCur = 0;
+    flip.active = false; dropRoll = false; hopsLeft = 0;
+    airPlan = null; airMode = 'fly';
+    activity = 'walk';
+    targetX = Math.max(20, Math.min(tx, innerR(w))); targetY = y;
+  }
 
   setFace('idle');
   vscode.postMessage({ type: 'hello' });

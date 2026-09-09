@@ -45,12 +45,19 @@ it walks along the bottom, climbs the sides, hangs from the top, and reacts to C
 as it does in the editor (pacing while working, flailing when you are needed, speech bubbles
 when you click it).
 
-- **One panel per screen**, and the buddy migrates between them every minute or two,
-  entering from the facing edge. macOS defaults to *Displays have separate Spaces*, under
-  which a single window cannot span two displays — it is pinned to one and clipped there, so
-  a spanning window makes the buddy vanish on the other screen. Panels are rebuilt when a
-  monitor is plugged in, unplugged or rearranged. Tune the hop with
+- **One panel per screen**, and every minute or two the buddy **crosses** to the other one:
+  it heads for the edge facing it and carries on from the opposite edge of the next screen
+  at the same height — a bee flies off the right of one display and in from the left of the
+  next. macOS defaults to *Displays have separate Spaces*, under which a single window
+  cannot span two displays — it is pinned to one and clipped there, so a spanning window
+  makes the buddy vanish on the other screen. Panels are rebuilt when a monitor is plugged
+  in, unplugged or rearranged. Tune the hop with
   `defaults write com.warroom.claude-pulse buddyMigrateSeconds -float 30`.
+- **Flyers use the whole height** of wherever they live — the bee, dragon and ghost roam
+  from the floor to just under the top of the screen.
+- **Size is a page zoom**, not a CSS zoom on the sprite: in WebKit, CSS `zoom` also scales
+  the element's *position*, which sent a 1.6× bee off the right of the screen and left
+  hearts, flowers and speech bubbles far from it. With page zoom everything scales together.
 - **Clicks pass straight through** to whatever is underneath — the page reports where the
   character is and only that small rectangle is clickable, so the buddy can never swallow a
   click meant for another app.
@@ -175,6 +182,15 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   middle of the bar when space runs out; the far edges survive. Claude Pulse therefore sits
   at the far-right edge by default (`claudePulse.priority: -900`). If another extension
   crowds it out, lower the priority further, or move it with `claudePulse.alignment`.
+- **Clicking items in the menu bar dropdown does nothing (e.g. picking a character)** — fixed
+  in 0.13.0. The dropdown was being torn down and rebuilt four times a second while open to
+  keep its timers live, which destroyed the *Buddy Character* submenu (and whatever item was
+  under the cursor) before a click could register. It is now built once when opened and only
+  the text of existing rows (timers, agents, token counts) is refreshed in place.
+- **The desktop buddy hangs motionless at a screen edge after switching screens** — fixed in
+  0.13.0: the hand-off now goes through `enterAt()` inside `buddy.html`, which resets the
+  whole motion state, and crossings only start once the character is already near the facing
+  edge (walkers dash for it), so there is no long march ending in a mid-screen jump.
 - **I cannot click the desktop buddy** — fixed in 0.12.3, and it had two causes: the
   character moved out from under the cursor before the click landed (it now stops when your
   cursor comes near), and macOS was spending the click activating the window instead of

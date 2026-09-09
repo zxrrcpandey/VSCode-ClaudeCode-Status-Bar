@@ -15,6 +15,7 @@ import ServiceManagement
 // MARK: - Model
 
 struct Agent {
+    var id: String
     var desc: String?
     var type: String
     var state: String
@@ -132,10 +133,11 @@ final class StateReader {
 
             var agents: [Agent] = []
             if let raw = obj["agents"] as? [String: Any] {
-                for (_, v) in raw {
+                for (k, v) in raw {
                     guard let a = v as? [String: Any] else { continue }
                     let todos = a["todos"] as? [String: Any]
                     agents.append(Agent(
+                        id: k,
                         desc: a["desc"] as? String,
                         type: (a["type"] as? String) ?? "agent",
                         state: (a["state"] as? String) ?? "running",
@@ -350,7 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if cfg.notifyOnInput {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
-        if usage.available { usage.refresh { [weak self] in self?.render() } }
+        if usage.available { usage.refresh { [weak self] in self?.usageDone() } }
 
         if UserDefaults.standard.bool(forKey: "buddyVisible") { buddy.show() }
 
@@ -368,7 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func tick() {
         spinnerFrame = (spinnerFrame + 1) % spinner.count
         usageTick += 1
-        if usageTick % 120 == 0, usage.available { usage.refresh { [weak self] in self?.render() } }
+        if usageTick % 120 == 0, usage.available { usage.refresh { [weak self] in self?.usageDone() } }
         refresh()
     }
 
@@ -376,7 +378,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         cfg = Settings.load()
         sessions = StateReader.read()
         render()
-        if menuOpen, let menu = statusItem.menu { rebuild(menu) }
+        // Never rebuild the menu while it is open: removing items destroys the
+        // one under the cursor (and any open submenu) before a click can land.
+        // Only the text of existing rows is refreshed in place.
+        if menuOpen { refreshOpenMenu() }
         if buddy.isVisible { buddy.post(buddyPayload()) }
         notifyIfNeeded()
     }
@@ -493,10 +498,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         menuOpen = true
-        if usage.available { usage.refresh { [weak self] in self?.render() } }
+        if usage.available { usage.refresh { [weak self] in self?.usageDone() } }
         rebuild(menu)
     }
     func menuDidClose(_ menu: NSMenu) { menuOpen = false }
+
+    /// A finished token scan updates the status bar and any open dropdown.
+    private func usageDone() {
+        render()
+        if menuOpen { refreshOpenMenu() }
+    }
 
     private func header(_ title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -517,8 +528,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
+    /// Rows whose text carries a live timer, refreshed in place while the menu
+    /// is open. `render` returns nil to leave the row as it is.
+    private var liveRows: [(item: NSMenuItem, render: () -> String?, isDetail: Bool)] = []
+
+    private func detailAttributes() -> [NSAttributedString.Key: Any] {
+        [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
+         .foregroundColor: NSColor.secondaryLabelColor]
+    }
+
+    private func refreshOpenMenu() {
+        for row in liveRows {
+            guard let text = row.render() else { continue }
+            if row.isDetail {
+                if row.item.attributedTitle?.string != text {
+                    row.item.attributedTitle = NSAttributedString(string: text, attributes: detailAttributes())
+                }
+            } else if row.item.title != text {
+                row.item.title = text
+            }
+        }
+    }
+
+    private func sessionLine(_ s: Session, _ now: Double) -> String {
+        let st = StateReader.effectiveState(s, now, cfg)
+        let icon = ["idle": "✳", "working": "⟳", "waiting": "🔔", "done": "✓", "error": "⚠"][st.rawValue] ?? "✳"
+        var line = "\(icon)  \(s.project) — \(st.rawValue)"
+        if st == .working, let started = s.startedAt { line += " \(Fmt.elapsed(now - started))" }
+        return line
+    }
+
+    private func agentLine(_ a: Agent, _ now: Double) -> String {
+        var l = "· \(a.type) — \(a.label)"
+        if let st = a.startedAt { l += "  \(Fmt.elapsed(now - st))" }
+        if let d = a.todosDone, let t = a.todosTotal, t > 0 { l += " · \(d)/\(t)" }
+        else if a.tools > 0 { l += " · \(a.tools) tool\(a.tools == 1 ? "" : "s")" }
+        if let tool = a.tool { l += " · \(tool)" }
+        return l
+    }
+
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
+        liveRows.removeAll()
         let now = Date().timeIntervalSince1970 * 1000
 
         if sessions.isEmpty {
@@ -531,14 +582,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             for s in ordered {
                 let st = StateReader.effectiveState(s, now, cfg)
-                let icon = ["idle": "✳", "working": "⟳", "waiting": "🔔", "done": "✓", "error": "⚠"][st.rawValue] ?? "✳"
-                var line = "\(icon)  \(s.project) — \(st.rawValue)"
-                if st == .working, let started = s.startedAt { line += " \(Fmt.elapsed(now - started))" }
-                let item = NSMenuItem(title: line, action: #selector(openProject(_:)), keyEquivalent: "")
+                let sid = s.id
+                let item = NSMenuItem(title: sessionLine(s, now), action: #selector(openProject(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = s.cwd
                 item.toolTip = s.cwd
                 menu.addItem(item)
+                liveRows.append((item, { [weak self] in
+                    guard let self, let cur = self.sessions.first(where: { $0.id == sid }) else { return nil }
+                    return self.sessionLine(cur, Date().timeIntervalSince1970 * 1000)
+                }, false))
 
                 if st == .working {
                     if let d = s.todosDone, let t = s.todosTotal, t > 0 {
@@ -546,7 +599,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         if let a = s.todosActive { l += "  \(a)" }
                         menu.addItem(detail(l))
                     } else if let tool = s.tool {
-                        menu.addItem(detail("using \(tool)"))
+                        let row = detail("using \(tool)")
+                        menu.addItem(row)
+                        liveRows.append((row, { [weak self] in
+                            guard let self, let cur = self.sessions.first(where: { $0.id == sid }),
+                                  let t = cur.tool else { return nil }
+                            return "using \(t)"
+                        }, true))
                     }
                 }
                 if st == .waiting {
@@ -556,39 +615,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 let running = s.runningAgents
                 if !running.isEmpty {
-                    menu.addItem(detail("\(running.count) agent\(running.count == 1 ? "" : "s") working:"))
+                    let head = detail("\(running.count) agent\(running.count == 1 ? "" : "s") working:")
+                    menu.addItem(head)
+                    liveRows.append((head, { [weak self] in
+                        guard let self, let cur = self.sessions.first(where: { $0.id == sid }) else { return nil }
+                        let n = cur.runningAgents.count
+                        return n == 0 ? "agents finished" : "\(n) agent\(n == 1 ? "" : "s") working:"
+                    }, true))
                     for a in running.prefix(8) {
-                        var l = "· \(a.type) — \(a.label)"
-                        if let st = a.startedAt { l += "  \(Fmt.elapsed(now - st))" }
-                        if let d = a.todosDone, let t = a.todosTotal, t > 0 { l += " · \(d)/\(t)" }
-                        else if a.tools > 0 { l += " · \(a.tools) tool\(a.tools == 1 ? "" : "s")" }
-                        if let tool = a.tool { l += " · \(tool)" }
-                        menu.addItem(detail(l, indent: 2))
+                        let aid = a.id
+                        let row = detail(agentLine(a, now), indent: 2)
+                        menu.addItem(row)
+                        // Bound to the agent's identity, not its row number: when one
+                        // finishes the others must not shift into its row.
+                        liveRows.append((row, { [weak self] in
+                            guard let self, let cur = self.sessions.first(where: { $0.id == sid }) else { return nil }
+                            let now = Date().timeIntervalSince1970 * 1000
+                            if let live = cur.runningAgents.first(where: { $0.id == aid }) { return self.agentLine(live, now) }
+                            if let done = cur.agents.first(where: { $0.id == aid }) { return "· \(done.type) — \(done.label) · finished" }
+                            return nil
+                        }, true))
                     }
                     if running.count > 8 { menu.addItem(detail("…and \(running.count - 8) more", indent: 2)) }
                 }
-                if let out = usage.bySession[s.id], out > 0 {
-                    menu.addItem(detail("\(Fmt.tokens(out)) tokens out this session"))
+                if usage.available {
+                    let tok = detail(usage.bySession[s.id].map { "\(Fmt.tokens($0)) tokens out this session" } ?? "counting tokens…")
+                    menu.addItem(tok)
+                    liveRows.append((tok, { [weak self] in
+                        guard let self, let out = self.usage.bySession[sid] else { return nil }
+                        return "\(Fmt.tokens(out)) tokens out this session"
+                    }, true))
                 }
                 menu.addItem(NSMenuItem.separator())
             }
         }
 
         if usage.available {
-            let today = usage.sum(days: 1)
-            let week = usage.sum(days: 7)
-            if !today.isEmpty || !week.isEmpty {
-                menu.addItem(header("TOKEN USAGE (output)"))
-                if !today.isEmpty {
-                    menu.addItem(detail("today: " + today.map { "\($0.model) \(Fmt.tokens($0.out))" }.joined(separator: " · ")))
-                }
-                if !week.isEmpty {
-                    let total = week.reduce(0) { $0 + $1.out }
-                    menu.addItem(detail("last 7 days: \(Fmt.tokens(total)) — " + week.map { $0.model }.joined(separator: ", ")))
-                }
-                menu.addItem(detail("plan limits: run /usage inside Claude Code"))
-                menu.addItem(NSMenuItem.separator())
+            let todayText: () -> String? = { [weak self] in
+                guard let self else { return nil }
+                let t = self.usage.sum(days: 1)
+                return t.isEmpty ? "today: scanning…" : "today: " + t.map { "\($0.model) \(Fmt.tokens($0.out))" }.joined(separator: " · ")
             }
+            let weekText: () -> String? = { [weak self] in
+                guard let self else { return nil }
+                let w = self.usage.sum(days: 7)
+                if w.isEmpty { return "last 7 days: scanning…" }
+                let total = w.reduce(0) { $0 + $1.out }
+                return "last 7 days: \(Fmt.tokens(total)) — " + w.map { $0.model }.joined(separator: ", ")
+            }
+            menu.addItem(header("TOKEN USAGE (output)"))
+            let todayRow = detail(todayText() ?? ""), weekRow = detail(weekText() ?? "")
+            menu.addItem(todayRow); liveRows.append((todayRow, todayText, true))
+            menu.addItem(weekRow);  liveRows.append((weekRow, weekText, true))
+            menu.addItem(detail("plan limits: run /usage inside Claude Code"))
+            menu.addItem(NSMenuItem.separator())
         }
 
         let showBuddy = NSMenuItem(title: "Desktop Buddy", action: #selector(toggleBuddy(_:)), keyEquivalent: "")
