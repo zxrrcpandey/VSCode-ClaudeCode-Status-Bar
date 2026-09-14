@@ -4,32 +4,55 @@
 #
 #   ./build.sh            → macos/build/ClaudePulse.app
 #   ./build.sh --install  → also copies it to /Applications and launches it
+#   ./make-dmg.sh         → a drag-to-install disk image for other Macs
 set -euo pipefail
 
 cd "$(dirname "$0")"
-VERSION="$(node -p "require('../package.json').version" 2>/dev/null || echo 0.1.0)"
+VERSION="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' ../package.json | head -1)"
+VERSION="${VERSION:-0.1.0}"
 APP="build/ClaudePulse.app"
 MIN_MACOS=13.0
+# Apple's compiler, run through xcrun and pointed at Apple's SDK explicitly.
+# Another Swift toolchain on PATH (swiftly, a swift.org download) breaks the
+# build two ways: its own swiftc can lag a Command Line Tools update ("unknown
+# argument: -target-arch-variant" from the new SDK's interfaces), and its shims
+# for clang & co. hijack SDK discovery even for Apple's swiftc ("unable to load
+# standard library", duplicate SwiftBridging module). xcrun + -sdk avoids both.
+SWIFT=(xcrun swiftc)
+SDK="$(xcrun --show-sdk-path 2>/dev/null || true)"
+if [ -n "$SDK" ]; then SWIFT+=(-sdk "$SDK"); fi
 
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# Universal binary when the SDK can produce one, otherwise native arch only.
-SOURCES=(ClaudePulse.swift DesktopBuddy.swift)
-compile() { swiftc -O -parse-as-library -target "$1-apple-macos$MIN_MACOS" -o "$2" "${SOURCES[@]}"; }
-if compile arm64 build/pulse-arm64 2>/dev/null && compile x86_64 build/pulse-x86_64 2>/dev/null; then
-  lipo -create build/pulse-arm64 build/pulse-x86_64 -output "$APP/Contents/MacOS/ClaudePulse"
-  echo "built universal (arm64 + x86_64)"
-else
-  compile "$(uname -m)" "$APP/Contents/MacOS/ClaudePulse"
-  echo "built $(uname -m) only"
-fi
-rm -f build/pulse-arm64 build/pulse-x86_64
+# Universal (arm64 + x86_64) when the SDK can produce it, so one download runs
+# on Apple Silicon and Intel Macs alike.
+universal() {   # universal <output> <sources...>
+  local out="$1"; shift
+  if "${SWIFT[@]}" -O -parse-as-library -target "arm64-apple-macos$MIN_MACOS" -o "$out.arm64" "$@" 2>/dev/null &&
+     "${SWIFT[@]}" -O -parse-as-library -target "x86_64-apple-macos$MIN_MACOS" -o "$out.x86_64" "$@" 2>/dev/null; then
+    lipo -create "$out.arm64" "$out.x86_64" -output "$out"
+    rm -f "$out.arm64" "$out.x86_64"
+    echo "built $(basename "$out"): universal (arm64 + x86_64)"
+  else
+    rm -f "$out.arm64" "$out.x86_64"
+    "${SWIFT[@]}" -O -parse-as-library -target "$(uname -m)-apple-macos$MIN_MACOS" -o "$out" "$@"
+    echo "built $(basename "$out"): $(uname -m) only"
+  fi
+}
 
-# Token usage reuses the same scanner the VS Code extension runs, and the
-# desktop buddy reuses the very same character page as the VS Code panel.
-cp ../usage-scan.js "$APP/Contents/Resources/usage-scan.js"
-cp ../buddy.html "$APP/Contents/Resources/buddy.html"
+universal "$APP/Contents/MacOS/ClaudePulse" ClaudePulse.swift DesktopBuddy.swift Setup.swift
+# pulse-hook runs the hook, installers and usage scanner on JavaScriptCore, so
+# the Mac this is installed on does not need Node.js.
+universal "$APP/Contents/MacOS/pulse-hook" PulseHook.swift
+
+R="$APP/Contents/Resources"
+# The same scripts and character page the VS Code extension uses.
+cp ../usage-scan.js ../buddy.html ../hooks/hook.js ../scripts/install-hooks.js ../scripts/uninstall-hooks.js "$R/"
+# The VS Code extension rides along, so one download sets up both.
+VSIX="../claude-pulse-$VERSION.vsix"
+if [ ! -f "$VSIX" ] && command -v node >/dev/null 2>&1; then (cd .. && node scripts/build-vsix.js >/dev/null); fi
+if [ -f "$VSIX" ]; then cp "$VSIX" "$R/"; else echo "note: $VSIX not found — VS Code extension not bundled"; fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -50,8 +73,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature: keeps Gatekeeper and the notification centre happy for a
-# locally built app. (A distributed build would use a Developer ID instead.)
+# Ad-hoc signatures (nested helper first, then the bundle). A notarized build
+# would use a Developer ID instead; without one, other Macs need a one-time
+# "Open Anyway" — see make-dmg.sh.
+codesign --force --sign - --timestamp=none "$APP/Contents/MacOS/pulse-hook" >/dev/null 2>&1 || true
 codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 || echo "note: ad-hoc signing skipped"
 
 echo "built $APP (version $VERSION)"

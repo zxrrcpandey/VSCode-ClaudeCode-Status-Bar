@@ -20,9 +20,29 @@ The same indicator, outside the editor: a native menu bar app (`macos/`) that re
 same state files, so it shows **every** Claude Code session on the Mac — including ones in
 other windows, other editors, or a plain terminal.
 
-```sh
-cd macos && ./build.sh --install     # builds ClaudePulse.app and launches it
-```
+### Install on any Mac
+
+Download **`ClaudePulse-<version>.dmg`** from the
+[releases page](https://github.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/releases), drag
+Claude Pulse into Applications, open it, and choose **Set Up** when it offers to connect to
+Claude Code. That is the whole install:
+
+- **No Node.js, Xcode or repo needed.** The app carries `pulse-hook`, a small runner built on
+  JavaScriptCore (part of every Mac) that executes the very same hook, installer and
+  usage-scanner scripts the VS Code extension runs under Node. Setup copies it to
+  `~/.claude/claude-pulse/`, so the hooks keep working if the app is moved.
+- **The VS Code extension is included** — setup offers it when VS Code is installed, and the
+  menu has *Install VS Code Extension…*.
+- **macOS 13 or later, Apple Silicon or Intel** (universal binaries).
+- **A one-time "Open Anyway".** The build is ad-hoc signed, not notarized by Apple, so macOS
+  blocks the first open: on macOS 15+ open *System Settings → Privacy & Security* and click
+  *Open Anyway*; on 13–14 Control-click the app and choose *Open*. Or in Terminal:
+  `xattr -dr com.apple.quarantine /Applications/ClaudePulse.app`.
+- Scripted installs: `/Applications/ClaudePulse.app/Contents/MacOS/ClaudePulse --setup-hooks`
+  (or `--remove-hooks`).
+
+Build it yourself with `cd macos && ./make-dmg.sh` (the disk image), or
+`./build.sh --install` for this Mac only.
 
 - Menu bar: `⣾ 4:46 · 3⚙` while working (spinner, elapsed, running agents), `3/7 ▰▰▰▱▱▱▱`
   when Claude is following a checklist, an orange `🔔 needs input` when you are actually

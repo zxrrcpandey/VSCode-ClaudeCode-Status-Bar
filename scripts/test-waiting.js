@@ -31,7 +31,11 @@ function effectiveState(s, now) {
   return s.state;
 }
 
-const fire = (sid, o) => cp.execFileSync('node', [path.join(REPO, 'hooks/hook.js')],
+// PULSE_HOOK_BIN=<path to pulse-hook> runs the same scenarios through the macOS
+// app's JavaScriptCore runner instead of Node, to prove the two agree.
+const HOOK_BIN = process.env.PULSE_HOOK_BIN;
+const fire = (sid, o) => cp.execFileSync(HOOK_BIN || 'node',
+  HOOK_BIN ? ['run', path.join(REPO, 'hooks/hook.js')] : [path.join(REPO, 'hooks/hook.js')],
   { input: JSON.stringify(Object.assign({ session_id: sid, cwd: '/tmp/p' }, o)) });
 const read = (sid) => JSON.parse(fs.readFileSync(path.join(DIR, sid + '.json'), 'utf8'));
 const write = (sid, s) => { fs.mkdirSync(DIR, { recursive: true }); fs.writeFileSync(path.join(DIR, sid + '.json'), JSON.stringify(s)); };

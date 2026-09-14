@@ -3,6 +3,8 @@
  * Removes Claude Pulse hook commands from ~/.claude/settings.json and deletes
  * ~/.claude/claude-pulse/. Backs up settings.json first. Only this project's
  * commands are removed — user hooks sharing a group are preserved.
+ *
+ * Runs under Node from the repo, or under the macOS app's JavaScriptCore runner.
  */
 'use strict';
 
@@ -13,10 +15,11 @@ const os = require('os');
 const HOME = os.homedir();
 const SETTINGS = path.join(HOME, '.claude', 'settings.json');
 const PULSE_DIR = path.join(HOME, '.claude', 'claude-pulse');
-const MARKER = path.join('claude-pulse', 'hook.js');
+// Both flavours: `node ".../claude-pulse/hook.js"` and the native runner.
+const MARKERS = [path.join('claude-pulse', 'hook.js'), path.join('claude-pulse', 'pulse-hook')];
 
 function isPulseCommand(h) {
-  return h && typeof h.command === 'string' && h.command.includes(MARKER);
+  return h && typeof h.command === 'string' && MARKERS.some((m) => h.command.includes(m));
 }
 
 function withoutPulse(entries) {

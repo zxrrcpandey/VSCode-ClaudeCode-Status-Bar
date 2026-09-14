@@ -223,30 +223,25 @@ final class UsageScanner {
     private(set) var bySession: [String: Double] = [:]              // session -> output tokens
     private var busy = false
     private let script: String?
-    private let node: String?
+    private let runner: String?
 
     init() {
         script = Bundle.main.path(forResource: "usage-scan", ofType: "js")
-        // GUI apps do not inherit the shell PATH, so look in the usual places.
-        var found: String? = nil
-        var candidates = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
-        let nvm = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".nvm/versions/node")
-        if let versions = try? FileManager.default.contentsOfDirectory(atPath: nvm.path) {
-            for v in versions.sorted().reversed() { candidates.append(nvm.appendingPathComponent("\(v)/bin/node").path) }
-        }
-        for c in candidates where FileManager.default.isExecutableFile(atPath: c) { found = c; break }
-        node = found
+        // The bundled JavaScriptCore runner executes usage-scan.js, so token
+        // usage works on Macs without Node.js too.
+        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/pulse-hook").path
+        runner = FileManager.default.isExecutableFile(atPath: bundled) ? bundled : nil
     }
 
-    var available: Bool { script != nil && node != nil }
+    var available: Bool { script != nil && runner != nil }
 
     func refresh(_ done: @escaping () -> Void) {
-        guard !busy, let script, let node else { return }
+        guard !busy, let script, let runner else { return }
         busy = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let p = Process()
-            p.executableURL = URL(fileURLWithPath: node)
-            p.arguments = [script]
+            p.executableURL = URL(fileURLWithPath: runner)
+            p.arguments = ["run", script]
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = FileHandle.nullDevice
@@ -331,6 +326,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let spinner = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
 
     static func main() {
+        // Headless setup for scripted installs:  ClaudePulse --setup-hooks | --remove-hooks
+        let args = CommandLine.arguments
+        if args.contains("--setup-hooks") || args.contains("--remove-hooks") {
+            let r = args.contains("--setup-hooks") ? PulseSetup.installHooks() : PulseSetup.removeHooks()
+            FileHandle.standardOutput.write(Data(r.output.utf8))
+            exit(r.ok ? 0 : 1)
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -355,6 +357,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if usage.available { usage.refresh { [weak self] in self?.usageDone() } }
 
         if UserDefaults.standard.bool(forKey: "buddyVisible") { buddy.show() }
+        // First launch on a new Mac: offer to connect to Claude Code.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.offerSetupIfNeeded() }
 
         refresh()
         // 250ms keeps the spinner alive and elapsed times honest; the work is
@@ -574,7 +578,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if sessions.isEmpty {
             menu.addItem(header("No Claude Code sessions"))
-            menu.addItem(detail("Start Claude Code and it will appear here."))
+            menu.addItem(detail(PulseSetup.hooksInstalled()
+                ? "Start Claude Code and it will appear here."
+                : "Not connected yet — choose “Set Up Claude Code Hooks…” below."))
         } else {
             let ordered = sessions.sorted {
                 let a = StateReader.effectiveState($0, now, cfg), b = StateReader.effectiveState($1, now, cfg)
@@ -723,6 +729,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         login.target = self
         login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(login)
+
+        if PulseSetup.hooksInstalled() {
+            let rm = NSMenuItem(title: "Remove Claude Code Hooks…", action: #selector(removeHooksMenu(_:)), keyEquivalent: "")
+            rm.target = self
+            menu.addItem(rm)
+        } else {
+            let su = NSMenuItem(title: "Set Up Claude Code Hooks…", action: #selector(setupHooksMenu(_:)), keyEquivalent: "")
+            su.target = self
+            menu.addItem(su)
+        }
+        if PulseSetup.vscodeCLI() != nil && PulseSetup.bundledVSIX != nil {
+            let vs = NSMenuItem(title: "Install VS Code Extension…", action: #selector(installVSCodeMenu(_:)), keyEquivalent: "")
+            vs.target = self
+            menu.addItem(vs)
+        }
 
         let reset = NSMenuItem(title: "Reset Session States", action: #selector(resetStates(_:)), keyEquivalent: "")
         reset.target = self

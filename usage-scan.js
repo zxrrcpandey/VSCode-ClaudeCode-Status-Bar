@@ -9,6 +9,8 @@
  * Incremental: keeps a byte-offset cache per file, so after the first pass
  * only newly appended lines are read. Deduplicates repeated message ids
  * (transcripts write one line per content block, repeating the same usage).
+ *
+ * Runs under Node (VS Code extension) or the macOS app's JavaScriptCore runner.
  */
 'use strict';
 
@@ -17,7 +19,10 @@ const path = require('path');
 const os = require('os');
 
 const PROJECTS = path.join(os.homedir(), '.claude', 'projects');
-const CACHE = path.join(os.homedir(), '.claude', 'claude-pulse', 'usage-cache.json');
+// v2: offsets are counted in bytes. v1 advanced them by string index, which
+// undercounts multi-byte UTF-8 (—, emoji) and re-read already-counted lines.
+// A new file name, so an older extension writing v1 can't thrash the cache.
+const CACHE = path.join(os.homedir(), '.claude', 'claude-pulse', 'usage-cache-v2.json');
 const WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 const MAX_IDS = 500;
@@ -31,6 +36,22 @@ function walk(dir, out) {
     else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(full);
   }
   return out;
+}
+
+// The complete lines within [offset, offset+len) and how many BYTES they span.
+function readCompleteLines(file, offset, len) {
+  if (typeof __pulseReadLines === 'function') return __pulseReadLines(file, offset, len); // macOS runner
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(len);
+    const n = fs.readSync(fd, buf, 0, len, offset);
+    if (n <= 0) return { text: '', consumed: 0 };
+    const end = buf.lastIndexOf(10, n - 1);
+    if (end < 0) return { text: '', consumed: 0 };
+    return { text: buf.toString('utf8', 0, end), consumed: end + 1 };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function localDate(ts) {
@@ -60,17 +81,10 @@ function parseFile(file, rec) {
   }
   const len = st.size - rec.offset;
   if (len > 0) {
-    let text;
-    try {
-      const fd = fs.openSync(file, 'r');
-      const buf = Buffer.alloc(len);
-      fs.readSync(fd, buf, 0, len, rec.offset);
-      fs.closeSync(fd);
-      text = buf.toString('utf8');
-    } catch { return rec; }
-    const lastNl = text.lastIndexOf('\n');
-    if (lastNl >= 0) {
-      for (const line of text.slice(0, lastNl).split('\n')) {
+    let chunk;
+    try { chunk = readCompleteLines(file, rec.offset, len); } catch { return rec; }
+    if (chunk.consumed > 0) {
+      for (const line of chunk.text.split('\n')) {
         if (!line || line.indexOf('"assistant"') === -1) continue;
         let j;
         try { j = JSON.parse(line); } catch { continue; }
@@ -97,7 +111,7 @@ function parseFile(file, rec) {
           rec.ids[id] = u;
         }
       }
-      rec.offset += lastNl + 1;
+      rec.offset += chunk.consumed;
     }
   }
   rec.size = st.size;

@@ -5,6 +5,11 @@
  * - Copies hooks/hook.js to ~/.claude/claude-pulse/hook.js (stable path)
  * - Idempotent: removes previous claude-pulse commands (only those) before adding
  * - Atomic writes: never leaves settings.json half-written
+ *
+ * Runs under Node from the repo, or under the macOS app's JavaScriptCore runner
+ * (pulse-hook), which sets:
+ *   PULSE_HOOK_COMMAND  the command to register (the native runner, no Node)
+ *   PULSE_HOOK_SRC      where hook.js lives inside the app bundle
  */
 'use strict';
 
@@ -16,9 +21,10 @@ const HOME = os.homedir();
 const SETTINGS = path.join(HOME, '.claude', 'settings.json');
 const PULSE_DIR = path.join(HOME, '.claude', 'claude-pulse');
 const HOOK_DEST = path.join(PULSE_DIR, 'hook.js');
-const HOOK_SRC = path.join(__dirname, '..', 'hooks', 'hook.js');
-// Matches only this project's installed hook command, not arbitrary mentions.
-const MARKER = path.join('claude-pulse', 'hook.js');
+const HOOK_SRC = process.env.PULSE_HOOK_SRC || path.join(__dirname, '..', 'hooks', 'hook.js');
+// Matches only this project's installed hook commands — the Node flavour and
+// the native runner — not arbitrary mentions. Either replaces the other.
+const MARKERS = [path.join('claude-pulse', 'hook.js'), path.join('claude-pulse', 'pulse-hook')];
 
 const EVENTS = [
   'SessionStart',
@@ -39,7 +45,7 @@ const EVENTS = [
 ];
 
 function isPulseCommand(h) {
-  return h && typeof h.command === 'string' && h.command.includes(MARKER);
+  return h && typeof h.command === 'string' && MARKERS.some((m) => h.command.includes(m));
 }
 
 // Remove only our commands from a list of entry groups; keep everything else,
@@ -85,7 +91,7 @@ function main() {
   console.log('Installed hook script at ' + HOOK_DEST);
 
   // 4. Merge hook entries.
-  const cmd = 'node "' + HOOK_DEST + '"';
+  const cmd = process.env.PULSE_HOOK_COMMAND || ('node "' + HOOK_DEST + '"');
   if (!settings.hooks || typeof settings.hooks !== 'object') settings.hooks = {};
   for (const event of EVENTS) {
     const existing = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : [];

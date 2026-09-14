@@ -17,6 +17,13 @@ function readState(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { return {}; }
 }
 
+// Node has Atomics.wait; the macOS app's JavaScriptCore runner (pulse-hook)
+// has no SharedArrayBuffer and provides __pulseSleep instead.
+function sleepMs(ms) {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); return; } catch { /* not Node */ }
+  if (typeof __pulseSleep === 'function') __pulseSleep(ms);
+}
+
 // Serialize read-modify-write across concurrent hook processes (parallel
 // subagents fire events simultaneously). Lock = exclusive-create file; stale
 // locks (>2s, a crashed hook) are broken; worst case we proceed unlocked
@@ -29,7 +36,7 @@ function withLock(lockPath, fn) {
       if (e.code !== 'EEXIST') break;
       try { if (Date.now() - fs.statSync(lockPath).mtimeMs > 2000) { fs.unlinkSync(lockPath); continue; } } catch { /* gone */ }
       if (Date.now() > deadline) break;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3);
+      sleepMs(3);
     }
   }
   try { fn(); } finally {
