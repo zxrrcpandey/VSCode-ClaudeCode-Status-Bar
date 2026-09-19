@@ -2,9 +2,10 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.14.0",
+  "version": "0.14.1",
   "publisher": "warroom",
   "license": "MIT",
+  "icon": "media/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar.git"
@@ -65,7 +66,10 @@
       "properties": {
         "claudePulse.alignment": {
           "type": "string",
-          "enum": ["right", "left"],
+          "enum": [
+            "right",
+            "left"
+          ],
           "default": "right",
           "description": "Which side of the status bar the indicator sits on."
         },
@@ -109,7 +113,17 @@
         },
         "claudePulse.buddyCharacter": {
           "type": "string",
-          "enum": ["critter", "robot", "cat", "pup", "turtle", "snail", "bee", "dragon", "ghost"],
+          "enum": [
+            "critter",
+            "robot",
+            "cat",
+            "pup",
+            "turtle",
+            "snail",
+            "bee",
+            "dragon",
+            "ghost"
+          ],
           "default": "critter",
           "description": "Which built-in buddy character to show (ignored when buddyImage is set). Bipeds: critter, robot. Four-legged: cat, pup, turtle. Slow: turtle, snail. Flyers: bee (small), dragon (big), ghost."
         },

@@ -53,6 +53,8 @@ cp ../usage-scan.js ../buddy.html ../hooks/hook.js ../scripts/install-hooks.js .
 VSIX="../claude-pulse-$VERSION.vsix"
 if [ ! -f "$VSIX" ] && command -v node >/dev/null 2>&1; then (cd .. && node scripts/build-vsix.js >/dev/null); fi
 if [ -f "$VSIX" ]; then cp "$VSIX" "$R/"; else echo "note: $VSIX not found — VS Code extension not bundled"; fi
+# The bee app icon (regenerate with ./make-icon.sh).
+if [ -f AppIcon.icns ]; then cp AppIcon.icns "$R/AppIcon.icns"; fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -63,6 +65,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Claude Pulse</string>
   <key>CFBundleIdentifier</key><string>com.warroom.claude-pulse</string>
   <key>CFBundleExecutable</key><string>ClaudePulse</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
