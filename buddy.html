@@ -320,6 +320,8 @@
     }
     const idle = ['All quiet' + (d.project ? ' in <b>' + esc(d.project) + '</b>' : '') + '. Send Claude a prompt and I will start pacing!', 'Zzz… oh! Hi. Nothing running right now.'];
     if (d.tokensToday) idle.push('Today so far: <b>' + tok(d.tokensToday) + '</b> tokens out. Busy day!');
+    // A calm word about usage is what makes the worried one believable.
+    if (d.usage && d.usage.calm) idle.push('Plenty left — your week is <b>' + (d.usage.pct | 0) + '%</b> used.');
     return idle;
   }
 
@@ -782,6 +784,8 @@
   }
 
   let gotFirst = false;
+  let lastUsageStep = '';
+
   window.addEventListener('message', (e) => {
     const prev = data.state;
     data = (e.data && e.data.state) ? e.data : data;
@@ -795,9 +799,39 @@
         if (data.state === 'error') say(pick(lines()), 6000);
       }
     }
+    // Usage warnings, spoken once per step rather than on every poll. The
+    // character is the thing on screen people actually look at, so it gets to
+    // mention a limit before anything louder has to.
+    const u = data.usage;
+    if (gotFirst && u && u.kind) {
+      const step = u.kind + ':' + (u.tier || 0) + ':' + (u.pct || 0);
+      if (step !== lastUsageStep) {
+        lastUsageStep = step;
+        say(usageLine(u), 9000);
+        if (u.tier >= 2) fx(u.kind === 'compact' ? '🧹' : '⚠', CH * 0.4);
+      }
+    }
     if (!gotFirst) wavingUntil = performance.now() + 1500; // hello wave on open
     gotFirst = true;
   });
+
+  /* Built here, not by the host, so every piece goes through esc() and the
+     wording stays in one place with the rest of the character's voice. */
+  function usageLine(u) {
+    const until = u.until ? '<b>' + esc(u.until) + '</b>' : 'a while';
+    if (u.kind === 'blocked') {
+      return NAME + ', Claude is out of usage for now — back in ' + until + '. Nothing to do but wait.';
+    }
+    if (u.kind === 'compact') {
+      return NAME + ', this chat is <b>' + esc(u.ctx || '') + '</b> now, and every reply re-reads all of it. '
+        + 'Type <b>/compact</b> and the next ones get cheap again.';
+    }
+    if (u.kind === 'session') {
+      return NAME + ', the 5-hour window is <b>' + (u.pct | 0) + '%</b> used. It refills in ' + until
+        + ' — good moment for a tea.';
+    }
+    return NAME + ', your week is <b>' + (u.pct | 0) + '%</b> used and refills in ' + until + '. Pace yourself!';
+  }
 
   // ---- Host hooks (macOS multi-screen crossing) --------------------------
   // Called by the native host through evaluateJavaScript; unused in VS Code.

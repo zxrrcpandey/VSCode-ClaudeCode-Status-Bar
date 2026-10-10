@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "publisher": "warroom",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -59,6 +59,10 @@
       {
         "command": "claudePulse.usage",
         "title": "Claude Pulse: Token Usage Report"
+      },
+      {
+        "command": "claudePulse.statusLine",
+        "title": "Claude Pulse: Show Usage Inside Claude Code"
       }
     ],
     "configuration": {
@@ -136,6 +140,31 @@
           "type": "boolean",
           "default": true,
           "description": "Append the session's output-token count to the status bar while Claude works."
+        },
+        "claudePulse.showLimits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show how much of your 5-hour and weekly Claude limits is left. Read from the usage Claude Code already caches on this machine — no API calls."
+        },
+        "claudePulse.limitWarnWeekly": {
+          "type": "number",
+          "default": 75,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Percent of the weekly limit at which the indicator turns amber. It only turns amber if your current pace would also use the rest up before the week refills — a high number with a reset close behind is not worth a warning."
+        },
+        "claudePulse.limitWarnSession": {
+          "type": "number",
+          "default": 88,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Percent of the 5-hour limit at which the indicator turns amber. This is the window that usually blocks people mid-work."
+        },
+        "claudePulse.contextWarnTokens": {
+          "type": "number",
+          "default": 300000,
+          "minimum": 20000,
+          "description": "Flag a conversation once it carries this many tokens. Everything in a conversation is re-read on every reply, so a large one makes each turn cost far more; /compact keeps a summary and drops the rest."
         }
       }
     }

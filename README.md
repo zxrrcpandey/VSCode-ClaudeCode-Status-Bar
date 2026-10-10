@@ -49,10 +49,14 @@ Build it yourself with `cd macos && ./make-dmg.sh` (the disk image), or
   needed, `✓ 2:14` on completion, `⚠ error` when a response dies. `×N` means several
   sessions are busy.
 - Drop-down: every session with its project, state, current tool and checklist, each running
-  subagent (task, type, elapsed, tools), and token usage for today and the last 7 days.
-  Click a session to open its folder.
+  subagent (task, type, elapsed, tools), how much of your plan is left and how fast it is
+  going, and token usage for today and the last 7 days. Click a session to open its folder.
 - **Notifies you** when a session needs input — the point of a menu bar app is that you can
-  be looking somewhere else. Toggle it in the menu, along with *Open at Login*.
+  be looking somewhere else — and warns you before a usage limit stops you.
+- **Starts with your Mac.** It offers this the first time it is set up, and the menu's
+  *Open at Login* turns it on or off afterwards. It registers properly in System Settings ›
+  General › Login Items; if macOS refuses that for an unsigned build, it falls back to a
+  LaunchAgent in your own home folder. Only ever one of the two, so you never get two icons.
 - Native Swift, no Xcode project and no dependencies: `build.sh` compiles a universal
   binary with `swiftc` and assembles the `.app`. Same waiting-state rules as the extension
   (see `scripts/test-waiting.js`).
@@ -112,8 +116,54 @@ transcript files (`~/.claude/projects/**/*.jsonl`) — still no API calls:
   report across all projects.
 - The scan runs in a background process every 30 s with an incremental byte-offset cache,
   so it reads only newly appended transcript lines. Repeated message ids are deduplicated.
-- Plan limit *remaining* (the 5-hour / weekly percentages) is not stored on disk by Claude
-  Code — run `/usage` inside Claude Code for that.
+## Usage limits — knowing before you run out
+
+Claude Code asks the server how much of your plan is left and caches the answer in
+`~/.claude.json` (`cachedUsageUtilization`). Pulse reads that cache — it never writes to it,
+and still makes no API calls — so it can show the real percentages: the 5-hour window, the
+week, and any per-model window, each with the time it refills.
+
+That cache is not a live meter: it has been seen unchanged for 45 minutes during heavy use.
+So Pulse keeps a small local ledger of what the transcripts say you have spent, per minute,
+and pairs two cached readings with the tokens spent between them to learn what one percent
+costs. From then on it carries the cached figure forward to now and can say *"about 4% an
+hour, so it runs out around 6:20 pm — and it does not refill until 9 pm."* Until it has
+learnt that, it shows the cached number and labels it *last checked* rather than guessing.
+
+Learning it takes a couple of those server refreshes — a few hours of normal use — because a
+pair is only used when the local ledger covers the whole interval between the two readings.
+Nothing is shown as a live figure before then.
+
+- **The menu bar / status bar** carries a small badge once a window is worth watching
+  (`wk 62%`), amber then red as it gets worse. It stays visible when no session is running —
+  that is exactly the moment before you start the next one.
+- **A large banner on every screen** when it actually matters. It only interrupts when this
+  pace would empty the window *before* it refills, or when you are nearly out outright: 80%
+  with a reset twenty minutes away is not worth a warning, and crying wolf is how a warning
+  gets switched off. Snooze it, or turn it off under *Usage Warnings*.
+- **Being blocked** is reported from the transcript's own 429 record, which names the window
+  that ran out and when it frees up. Hitting the 5-hour window is not the same as running out
+  for the week, and the message says so.
+- **A /compact nudge** when a conversation has grown expensive — see below.
+- ***Show Usage in Claude Code*** (menu, or the matching command in VS Code) adds a status
+  line under the Claude Code prompt: `5h 62% · wk 41% · ctx 420k — /compact`. It is terminal
+  chrome, not conversation, so it costs no tokens, and it is where you are actually looking
+  when you run out. `~/.claude/settings.json` is backed up first, and an existing status line
+  of your own is never replaced.
+
+### Why a long conversation is the expensive part
+
+Everything in a conversation is re-read on every single turn. Measured on one real machine
+over two days: 1.18 **billion** cache-read tokens against 5.4 million output tokens — about
+88% of the spend was carrying context, not producing work, with sessions riding to ~970k
+tokens before auto-compact caught them.
+
+So Pulse measures each live session's context from the transcript, works out how much of a
+turn goes on re-reading it, and says so once it passes `contextWarnTokens` (300k by default)
+with more than half of each reply going on context. `/compact` keeps a summary and drops the
+rest; the next replies cost a fraction. Two other levers show up in the same place: the model
+(Opus costs multiples of Sonnet for the same tokens) and the effort level (Claude Code's own
+catalog warns that Max "can consume 3.5× or more usage than Medium").
 
 ## Buddy — a character that reacts to Claude
 
@@ -147,8 +197,12 @@ lives in its own panel (the same approach vscode-pets uses) — it cannot walk o
 ## Install
 
 ```sh
-# Run the waiting-state regression suite (uses a throwaway HOME):
-#   HOME=$(mktemp -d) node scripts/test-waiting.js
+# Run the regression suites (each builds its own throwaway HOME):
+#   HOME=$(mktemp -d) node scripts/test-waiting.js     # the waiting-state rules
+#   node scripts/test-limits.js                        # the usage-limit maths
+# …and the same limit suite through the runtime the macOS app uses:
+#   PULSE_LIMITS_BIN=/Applications/ClaudePulse.app/Contents/MacOS/pulse-hook \
+#     node scripts/test-limits.js
 
 # 1. Wire up the hooks (backs up settings.json first; idempotent)
 node scripts/install-hooks.js
@@ -244,3 +298,18 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   notifications re-arm it; questions and agent prompts are never aged out; 0 disables)
 - `claudePulse.provisionalWaitSeconds` — show *unconfirmed* permission requests as "needs
   input" after this many seconds (default 0 = never; see troubleshooting)
+- `claudePulse.showLimits` — show how much of your plan is left (default on)
+- `claudePulse.limitWarnWeekly` / `claudePulse.limitWarnSession` — the percentages that turn
+  the indicator amber (defaults 75 and 88)
+- `claudePulse.contextWarnTokens` — flag a conversation once it carries this much context
+  (default 300000)
+
+The macOS app reads the same things from its own domain, so `defaults write` tunes it
+without a restart:
+
+```bash
+defaults write com.warroom.claude-pulse limitWarnWeekly -int 60
+defaults write com.warroom.claude-pulse contextWarnTokens -int 250000
+defaults write com.warroom.claude-pulse limitAlerts -bool false   # no banners
+defaults write com.warroom.claude-pulse contextNudge -bool false  # no /compact nudge
+```

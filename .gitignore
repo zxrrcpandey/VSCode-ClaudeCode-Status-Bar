@@ -4,3 +4,6 @@ node_modules/
 macos/build/
 *.zip
 *.dmg
+
+# Per-session tool permissions Claude Code writes here — machine-local noise.
+.claude/

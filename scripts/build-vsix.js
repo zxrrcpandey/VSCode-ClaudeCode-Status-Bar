@@ -15,9 +15,11 @@ const cp = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-const FILES = ['package.json', 'extension.js', 'usage-scan.js', 'buddy.html', 'README.md', 'LICENSE'];
+const FILES = ['package.json', 'extension.js', 'usage-scan.js', 'limits-scan.js', 'buddy.html', 'README.md', 'LICENSE'];
 // hooks/ ships too: the extension keeps the installed hook in sync with it.
 const DIRS = ['media', 'hooks'];
+// Only the scripts the extension itself runs — not the build tooling.
+const SCRIPTS = ['install-statusline.js'];
 
 const build = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-pulse-vsix-'));
 const ext = path.join(build, 'extension');
@@ -27,6 +29,8 @@ for (const d of DIRS) {
   fs.mkdirSync(path.join(ext, d));
   for (const f of fs.readdirSync(path.join(ROOT, d))) fs.copyFileSync(path.join(ROOT, d, f), path.join(ext, d, f));
 }
+fs.mkdirSync(path.join(ext, 'scripts'));
+for (const f of SCRIPTS) fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(ext, 'scripts', f));
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 fs.writeFileSync(path.join(build, '[Content_Types].xml'), `<?xml version="1.0" encoding="utf-8"?>

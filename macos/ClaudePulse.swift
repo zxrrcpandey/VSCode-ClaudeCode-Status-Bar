@@ -10,7 +10,6 @@
 import AppKit
 import Foundation
 import UserNotifications
-import ServiceManagement
 
 // MARK: - Model
 
@@ -316,12 +315,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dirFD: CInt = -1
     private var sessions: [Session] = []
     private var cfg = Settings.load()
-    private let usage = UsageScanner()
+    let usage = UsageScanner()
     private var spinnerFrame = 0
     private var lastNotifiedWaiting: Set<String> = []
     private var menuOpen = false
     private var usageTick = 0
     private let buddy = DesktopBuddy()
+    let limits = LimitReader()
+    let banner = AlertBanner()
+    var policy = LimitPolicy.load()
 
     private let spinner = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
 
@@ -333,6 +335,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             FileHandle.standardOutput.write(Data(r.output.utf8))
             exit(r.ok ? 0 : 1)
         }
+        if args.contains("--login-status") {
+            let text: String
+            switch LoginItem.state() {
+            case .on: text = "on"
+            case .off: text = "off"
+            case .needsApproval: text = "needs approval in System Settings > General > Login Items"
+            case .unavailable(let why): text = "unavailable — \(why)"
+            }
+            FileHandle.standardOutput.write(Data((text + "\n").utf8))
+            exit(0)
+        }
+        if args.contains("--enable-login") || args.contains("--disable-login") {
+            let on = args.contains("--enable-login")
+            UserDefaults.standard.set(on, forKey: "openAtLoginChosen")
+            let message = LoginItem.set(on)
+            FileHandle.standardOutput.write(Data((message ?? (on ? "will open at login\n" : "will not open at login\n")).utf8))
+            exit(message == nil ? 0 : 1)
+        }
+        // Started twice (a LaunchAgent plus a click in Finder) would mean two
+        // icons in the menu bar, both polling. The newer copy stands down.
+        if LoginItem.anotherOlderInstanceIsRunning() { exit(0) }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -355,6 +378,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
         if usage.available { usage.refresh { [weak self] in self?.usageDone() } }
+        if limits.available { limits.refresh { [weak self] in self?.limitsDone() } }
+
+        // Each ad-hoc signed build gets a new code signature, which can quietly
+        // invalidate an existing login item — so if the user asked for it and
+        // it is no longer there, put it back.
+        if UserDefaults.standard.bool(forKey: "openAtLoginChosen"), LoginItem.canRegister, !LoginItem.isOn {
+            LoginItem.set(true)
+        }
 
         if UserDefaults.standard.bool(forKey: "buddyVisible") { buddy.show() }
         // First launch on a new Mac: offer to connect to Claude Code.
@@ -375,7 +406,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spinnerFrame = (spinnerFrame + 1) % spinner.count
         usageTick += 1
         if usageTick % 120 == 0, usage.available { usage.refresh { [weak self] in self?.usageDone() } }
+        // Plan limits move slowly — Claude Code refreshes its own cache as it
+        // runs — so once a minute is plenty, and the scan is a few small reads.
+        if usageTick % 240 == 1, limits.available { limits.refresh { [weak self] in self?.limitsDone() } }
         refresh()
+    }
+
+    /// A finished limit scan may need to put a banner on the screen.
+    private func limitsDone() {
+        policy = LimitPolicy.load()
+        render()
+        if menuOpen { refreshOpenMenu() }
+        evaluateAlerts()
     }
 
     private func refresh() {
@@ -393,7 +435,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The payload shape buddy.html expects (same as the VS Code extension's).
     private func buddyPayload() -> [String: Any] {
         let now = Date().timeIntervalSince1970 * 1000
-        guard let (s, st) = primary() else { return ["state": "idle"] }
+        guard let (s, st) = primary() else {
+            // Idle still carries usage: no session running is exactly when a
+            // word about what is left is most useful.
+            var p: [String: Any] = ["state": "idle"]
+            if let u = buddyUsage() { p["usage"] = u }
+            return p
+        }
         var p: [String: Any] = ["state": st.rawValue, "project": s.project]
         if let r = s.reason { p["reason"] = r }
         if let t = s.tool { p["tool"] = t }
@@ -404,6 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let a = s.todosActive { todos["active"] = a }
             p["todos"] = todos
         }
+        if let u = buddyUsage() { p["usage"] = u }
         if let out = usage.bySession[s.id], out > 0 { p["tokensSession"] = out }
         let today = usage.sum(days: 1).reduce(0) { $0 + $1.out }
         if today > 0 { p["tokensToday"] = today }
@@ -444,14 +493,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return best
     }
 
+    private let barFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+
+    /// The usage badge that rides along in the menu bar once a limit is worth
+    /// watching — "wk 78%". Quiet by design below the watch threshold: an
+    /// indicator that always shouts stops being read.
+    private func limitBadge() -> (text: String, color: NSColor)? {
+        let r = limits.report
+        guard r.available, policy.alertsEnabled else { return nil }
+        if let b = r.blocked {
+            return (b.resetsAt > 0 ? "⛔ \(LimitFmt.until(b.resetsAt))" : "⛔ limit", .systemRed)
+        }
+        let (tier, win) = policy.tier(r)
+        guard tier >= .watch, let w = win else { return nil }
+        let color: NSColor = tier >= .critical ? .systemRed : tier >= .warn ? .systemOrange : .secondaryLabelColor
+        return (LimitFmt.short(w), color)
+    }
+
+    private func barTitle(_ runs: [(String, NSColor)]) -> NSAttributedString {
+        let s = NSMutableAttributedString()
+        for (text, color) in runs where !text.isEmpty {
+            s.append(NSAttributedString(string: text, attributes: [.foregroundColor: color, .font: barFont]))
+        }
+        return s
+    }
+
     private func render() {
         guard let button = statusItem.button else { return }
         let now = Date().timeIntervalSince1970 * 1000
+        let badge = limitBadge()
         guard let (s, st) = primary() else {
-            button.attributedTitle = NSAttributedString(string: "✳", attributes: [
-                .foregroundColor: NSColor.tertiaryLabelColor,
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)])
-            button.toolTip = "No Claude Code session running"
+            button.attributedTitle = barTitle([("✳", .tertiaryLabelColor)]
+                + (badge.map { [("  " + $0.text, $0.color)] } ?? []))
+            button.toolTip = limitTooltip() ?? "No Claude Code session running"
             return
         }
 
@@ -492,10 +566,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             color = .tertiaryLabelColor
         }
 
-        button.attributedTitle = NSAttributedString(string: text, attributes: [
-            .foregroundColor: color,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)])
-        button.toolTip = "\(s.project) — \(st.rawValue)"
+        button.attributedTitle = barTitle([(text, color)]
+            + (badge.map { [("  " + $0.text, $0.color)] } ?? []))
+        var tip = "\(s.project) — \(st.rawValue)"
+        if let lt = limitTooltip() { tip += "\n" + lt }
+        button.toolTip = tip
+    }
+
+    private func limitTooltip() -> String? {
+        let r = limits.report
+        guard r.available else { return nil }
+        var lines = r.windows.filter { $0.percent > 0 || $0.key == "weekly" }
+            .map { AppDelegate.windowLine($0) }
+        if let b = r.blocked, b.resetsAt > 0 {
+            lines.insert("Blocked until \(LimitFmt.clock(b.resetsAt))", at: 0)
+        }
+        if r.stale, let age = r.ageMs { lines.append("(Claude Code last checked \(LimitFmt.ago(age)) ago)") }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     // MARK: Dropdown
@@ -513,7 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if menuOpen { refreshOpenMenu() }
     }
 
-    private func header(_ title: String) -> NSMenuItem {
+    func header(_ title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.attributedTitle = NSAttributedString(string: title, attributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
@@ -522,7 +609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    private func detail(_ title: String, indent: Int = 1) -> NSMenuItem {
+    func detail(_ title: String, indent: Int = 1) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.attributedTitle = NSAttributedString(string: title, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
@@ -534,7 +621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Rows whose text carries a live timer, refreshed in place while the menu
     /// is open. `render` returns nil to leave the row as it is.
-    private var liveRows: [(item: NSMenuItem, render: () -> String?, isDetail: Bool)] = []
+    var liveRows: [(item: NSMenuItem, render: () -> String?, isDetail: Bool)] = []
 
     private func detailAttributes() -> [NSAttributedString.Key: Any] {
         [.font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
@@ -656,6 +743,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
+        limitMenuRows(menu)
+
         if usage.available {
             let todayText: () -> String? = { [weak self] in
                 guard let self else { return nil }
@@ -673,7 +762,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let todayRow = detail(todayText() ?? ""), weekRow = detail(weekText() ?? "")
             menu.addItem(todayRow); liveRows.append((todayRow, todayText, true))
             menu.addItem(weekRow);  liveRows.append((weekRow, weekText, true))
-            menu.addItem(detail("plan limits: run /usage inside Claude Code"))
             menu.addItem(NSMenuItem.separator())
         }
 
@@ -725,9 +813,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notify.state = cfg.notifyOnInput ? .on : .off
         menu.addItem(notify)
 
+        let warnItem = NSMenuItem(title: "Usage Warnings", action: nil, keyEquivalent: "")
+        let warnMenu = NSMenu()
+        let onOff = NSMenuItem(title: "Warn me before I hit a limit",
+                               action: #selector(toggleLimitAlerts(_:)), keyEquivalent: "")
+        onOff.target = self
+        onOff.state = policy.alertsEnabled ? .on : .off
+        warnMenu.addItem(onOff)
+        let nudge = NSMenuItem(title: "Tell me when a chat gets expensive",
+                               action: #selector(toggleContextNudge(_:)), keyEquivalent: "")
+        nudge.target = self
+        nudge.state = policy.contextNudge ? .on : .off
+        warnMenu.addItem(nudge)
+        warnMenu.addItem(NSMenuItem.separator())
+        let quiet = NSMenuItem(title: "Quiet for 4 Hours", action: #selector(snoozeAllAlerts(_:)), keyEquivalent: "")
+        quiet.target = self
+        warnMenu.addItem(quiet)
+        let preview = NSMenuItem(title: "Show Me What It Looks Like",
+                                 action: #selector(testLimitBanner(_:)), keyEquivalent: "")
+        preview.target = self
+        warnMenu.addItem(preview)
+        warnItem.submenu = warnMenu
+        menu.addItem(warnItem)
+
         let login = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
         login.target = self
-        login.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        switch LoginItem.state() {
+        case .on:
+            login.state = .on
+        case .needsApproval:
+            login.state = .mixed
+            login.title = "Open at Login — needs your OK in System Settings"
+        case .off:
+            login.state = .off
+        case .unavailable(let why):
+            login.state = .off
+            login.isEnabled = false
+            login.toolTip = why
+        }
         menu.addItem(login)
 
         if PulseSetup.hooksInstalled() {
@@ -739,6 +862,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             su.target = self
             menu.addItem(su)
         }
+        // Usage under the Claude Code prompt — where you are actually looking
+        // when you run out. Costs nothing: the status line is terminal chrome.
+        let statusLine = NSMenuItem(title: "Show Usage in Claude Code",
+                                    action: #selector(toggleStatusLine(_:)), keyEquivalent: "")
+        statusLine.target = self
+        statusLine.state = PulseSetup.statusLineInstalled() ? .on : .off
+        menu.addItem(statusLine)
+
         if PulseSetup.vscodeCLI() != nil && PulseSetup.bundledVSIX != nil {
             let vs = NSMenuItem(title: "Install VS Code Extension…", action: #selector(installVSCodeMenu(_:)), keyEquivalent: "")
             vs.target = self
@@ -804,10 +935,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleLogin(_ sender: NSMenuItem) {
-        do {
-            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
-            else { try SMAppService.mainApp.register() }
-        } catch { NSSound.beep() }
+        let turningOn = !LoginItem.isOn
+        // Remember the choice, so an upgrade does not quietly re-enable
+        // something the user switched off.
+        UserDefaults.standard.set(turningOn, forKey: "openAtLoginChosen")
+        guard let message = LoginItem.set(turningOn) else { return }
+        let a = NSAlert()
+        a.messageText = turningOn ? "Almost — one more step" : "Couldn't change the login item"
+        a.informativeText = message
+        a.alertStyle = .informational
+        if case .needsApproval = LoginItem.state() {
+            a.addButton(withTitle: "Open System Settings")
+            a.addButton(withTitle: "Later")
+            NSApp.activate(ignoringOtherApps: true)
+            if a.runModal() == .alertFirstButtonReturn { LoginItem.openSystemSettings() }
+            return
+        }
+        a.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        a.runModal()
     }
 
     @objc private func resetStates(_ sender: NSMenuItem) {

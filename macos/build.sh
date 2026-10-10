@@ -41,14 +41,16 @@ universal() {   # universal <output> <sources...>
   fi
 }
 
-universal "$APP/Contents/MacOS/ClaudePulse" ClaudePulse.swift DesktopBuddy.swift Setup.swift
+universal "$APP/Contents/MacOS/ClaudePulse" ClaudePulse.swift DesktopBuddy.swift Setup.swift \
+  Limits.swift AlertBanner.swift LimitAlerts.swift LoginItem.swift
 # pulse-hook runs the hook, installers and usage scanner on JavaScriptCore, so
 # the Mac this is installed on does not need Node.js.
 universal "$APP/Contents/MacOS/pulse-hook" PulseHook.swift
 
 R="$APP/Contents/Resources"
 # The same scripts and character page the VS Code extension uses.
-cp ../usage-scan.js ../buddy.html ../hooks/hook.js ../scripts/install-hooks.js ../scripts/uninstall-hooks.js "$R/"
+cp ../usage-scan.js ../limits-scan.js ../buddy.html ../hooks/hook.js \
+   ../scripts/install-hooks.js ../scripts/uninstall-hooks.js ../scripts/install-statusline.js "$R/"
 # The VS Code extension rides along, so one download sets up both.
 VSIX="../claude-pulse-$VERSION.vsix"
 if [ ! -f "$VSIX" ] && command -v node >/dev/null 2>&1; then (cd .. && node scripts/build-vsix.js >/dev/null); fi
@@ -86,8 +88,11 @@ echo "built $APP (version $VERSION)"
 
 if [ "${1:-}" = "--install" ]; then
   pkill -x ClaudePulse 2>/dev/null || true
+  # Give the old process time to actually go: launching while LaunchServices
+  # still has the dying one registered fails with -600.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -qx ClaudePulse || break; sleep 0.3; done
   rm -rf /Applications/ClaudePulse.app
   cp -R "$APP" /Applications/ClaudePulse.app
-  open /Applications/ClaudePulse.app
+  open -a /Applications/ClaudePulse.app
   echo "installed to /Applications and launched — look at your menu bar"
 fi

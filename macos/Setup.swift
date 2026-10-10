@@ -27,7 +27,7 @@ enum PulseSetup {
 
     /// The runner is copied to a fixed place beside hook.js and settings.json
     /// points there, so the hooks keep working if the app is moved or deleted.
-    static func installHooks() -> (ok: Bool, output: String) {
+    static func ensureRunner() -> String? {
         let fm = FileManager.default
         do {
             try fm.createDirectory(at: pulseDir, withIntermediateDirectories: true)
@@ -40,15 +40,44 @@ enum PulseSetup {
             removexattr(tmp.path, "com.apple.quarantine", 0)
             // Atomic swap: a live Claude Code session may be running the hook now.
             if rename(tmp.path, installedRunner.path) != 0 {
-                return (false, "Could not place the hook runner at \(installedRunner.path): \(String(cString: strerror(errno)))")
+                return "Could not place the hook runner at \(installedRunner.path): \(String(cString: strerror(errno)))"
             }
         } catch {
-            return (false, "Could not install the hook runner in \(pulseDir.path): \(error.localizedDescription)")
+            return "Could not install the hook runner in \(pulseDir.path): \(error.localizedDescription)"
         }
+        return nil
+    }
+
+    static func installHooks() -> (ok: Bool, output: String) {
+        if let problem = ensureRunner() { return (false, problem) }
         return run(installedRunner, ["run", resources.appendingPathComponent("install-hooks.js").path], env: [
             "PULSE_HOOK_COMMAND": "\"\(installedRunner.path)\"",
             "PULSE_HOOK_SRC": resources.appendingPathComponent("hook.js").path,
         ])
+    }
+
+    // MARK: Claude Code's own status line
+
+    static var installedLimitsScript: URL { pulseDir.appendingPathComponent("limits-scan.js") }
+
+    static func statusLineInstalled() -> Bool {
+        guard let s = try? String(contentsOf: settingsFile, encoding: .utf8) else { return false }
+        return s.contains("claude-pulse/limits-scan.js")
+    }
+
+    /// Usage under the Claude Code prompt. Costs nothing: the status line is
+    /// terminal chrome, not part of the conversation.
+    static func installStatusLine() -> (ok: Bool, output: String) {
+        if let problem = ensureRunner() { return (false, problem) }
+        return run(installedRunner, ["run", resources.appendingPathComponent("install-statusline.js").path], env: [
+            "PULSE_STATUSLINE_COMMAND": "\"\(installedRunner.path)\" run \"\(installedLimitsScript.path)\" --statusline",
+            "PULSE_LIMITS_SRC": resources.appendingPathComponent("limits-scan.js").path,
+        ])
+    }
+
+    static func removeStatusLine() -> (ok: Bool, output: String) {
+        let runner = FileManager.default.isExecutableFile(atPath: installedRunner.path) ? installedRunner : bundledRunner
+        return run(runner, ["run", resources.appendingPathComponent("install-statusline.js").path, "--remove"], env: [:])
     }
 
     /// The uninstaller deletes ~/.claude/claude-pulse — including the copied
@@ -102,7 +131,10 @@ enum PulseSetup {
 extension AppDelegate {
     /// Offered once on first launch; afterwards it lives in the menu.
     func offerSetupIfNeeded() {
-        guard !PulseSetup.hooksInstalled(), !UserDefaults.standard.bool(forKey: "setupDeclined") else { return }
+        guard !PulseSetup.hooksInstalled(), !UserDefaults.standard.bool(forKey: "setupDeclined") else {
+            maybeOfferLogin()
+            return
+        }
         let a = NSAlert()
         a.messageText = "Connect Claude Pulse to Claude Code?"
         a.informativeText = "Claude Pulse follows what Claude Code is doing through small local hooks "
@@ -117,16 +149,61 @@ extension AppDelegate {
             performSetup()
         } else {
             UserDefaults.standard.set(true, forKey: "setupDeclined")
+            maybeOfferLogin()
         }
+    }
+
+    /// An indicator that vanishes at the next restart is no use, so offer this
+    /// once — then it lives in the menu like any other preference.
+    func maybeOfferLogin() {
+        let d = UserDefaults.standard
+        guard d.object(forKey: "openAtLoginChosen") == nil, LoginItem.canRegister, !LoginItem.isOn else { return }
+        let a = NSAlert()
+        a.messageText = "Start Claude Pulse automatically?"
+        a.informativeText = "It will open quietly in the menu bar when you log in, so the indicator and your "
+            + "usage warnings are always there. You can turn this off in the Claude Pulse menu at any time."
+        a.addButton(withTitle: "Start at Login")
+        a.addButton(withTitle: "No Thanks")
+        NSApp.activate(ignoringOtherApps: true)
+        let yes = a.runModal() == .alertFirstButtonReturn
+        d.set(yes, forKey: "openAtLoginChosen")
+        guard yes else { return }
+        if let message = LoginItem.set(true) { showLoginFollowUp(message) }
+    }
+
+    func showLoginFollowUp(_ message: String) {
+        let a = NSAlert()
+        a.messageText = "One more step"
+        a.informativeText = message
+        if case .needsApproval = LoginItem.state() {
+            a.addButton(withTitle: "Open System Settings")
+            a.addButton(withTitle: "Later")
+            NSApp.activate(ignoringOtherApps: true)
+            if a.runModal() == .alertFirstButtonReturn { LoginItem.openSystemSettings() }
+            return
+        }
+        a.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        a.runModal()
     }
 
     func performSetup() {
         let r = PulseSetup.installHooks()
         let a = NSAlert()
         if r.ok {
+            // They have just asked for Claude Pulse to be wired up, so make
+            // sure it is still there after the next restart.
+            var loginNote = ""
+            if UserDefaults.standard.object(forKey: "openAtLoginChosen") == nil,
+               LoginItem.canRegister, !LoginItem.isOn {
+                UserDefaults.standard.set(true, forKey: "openAtLoginChosen")
+                loginNote = LoginItem.set(true).map { "\n\n" + $0 }
+                    ?? "\n\nIt will start automatically when you log in — you can turn that off in the menu."
+            }
             let canVS = PulseSetup.vscodeCLI() != nil && PulseSetup.bundledVSIX != nil
             a.messageText = "Claude Pulse is connected"
             a.informativeText = "Start a new Claude Code session (or restart the one you have open) and it will appear in the menu bar."
+                + loginNote
             if canVS {
                 a.informativeText += "\n\nVS Code is installed — add the Claude Pulse status bar extension as well?"
                 a.addButton(withTitle: "Install VS Code Extension")
@@ -180,4 +257,35 @@ extension AppDelegate {
     }
 
     @objc func installVSCodeMenu(_ sender: NSMenuItem) { performVSCodeInstall() }
+
+    @objc func toggleStatusLine(_ sender: NSMenuItem) {
+        let adding = !PulseSetup.statusLineInstalled()
+        if adding {
+            let c = NSAlert()
+            c.messageText = "Show your usage inside Claude Code?"
+            c.informativeText = "This adds a status line under the Claude Code prompt showing how much of your "
+                + "5-hour and weekly limits is left, and when a conversation has grown expensive. It is part of "
+                + "the terminal display, not the conversation, so it costs no tokens.\n\n"
+                + "~/.claude/settings.json is backed up first."
+            c.addButton(withTitle: "Add It")
+            c.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard c.runModal() == .alertFirstButtonReturn else { return }
+        }
+        let r = adding ? PulseSetup.installStatusLine() : PulseSetup.removeStatusLine()
+        let a = NSAlert()
+        if r.ok {
+            a.messageText = adding ? "Added to Claude Code" : "Removed"
+            a.informativeText = adding
+                ? "Restart Claude Code (or open a new session) and your usage appears under the prompt."
+                : "Claude Code's status line is back to how it was."
+        } else {
+            a.alertStyle = .warning
+            a.messageText = adding ? "Couldn't add the status line" : "Couldn't remove the status line"
+            a.informativeText = String(r.output.suffix(1500))
+        }
+        a.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        a.runModal()
+    }
 }

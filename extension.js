@@ -17,6 +17,9 @@ let tickTimer = null;
 let usageData = null;
 let usagePoll = null;
 let usageBusy = false;
+let limitsData = null;
+let limitsPoll = null;
+let limitsBusy = false;
 let buddy = null;
 let lastBuddyData = null;
 let gitName = '';
@@ -114,6 +117,36 @@ class BuddyProvider {
   }
 }
 
+/* What the character should know about usage: the one step worth mentioning,
+ * so it comments rather than chatters. Same shape the macOS app sends. */
+function buddyUsage() {
+  if (!limitsData || !limitsData.available) return null;
+  const cfg = limitSettings();
+  if (!cfg.show) return null;
+  if (limitsData.blocked) {
+    const b = limitsData.blocked;
+    return { kind: 'blocked', tier: 3, until: b.resetsAt ? untilText(b.resetsAt) : '' };
+  }
+  const worst = limitWorst();
+  if (worst && worst.tier >= 2 && worst.w) {
+    return {
+      kind: worst.w.key === 'session' ? 'session' : 'weekly',
+      tier: worst.tier,
+      pct: windowShown(worst.w),
+      until: worst.w.resetsAt ? untilText(worst.w.resetsAt) : '',
+    };
+  }
+  const big = Object.keys(limitsData.sessions || {})
+    .map((k) => limitsData.sessions[k])
+    .filter((x) => x.ctx >= cfg.contextWarn && x.turn && x.turn.contextShare >= 0.55)
+    .sort((a, b) => b.ctx - a.ctx)[0];
+  if (big) return { kind: 'compact', tier: 2, ctx: fmtTok(big.ctx) };
+  // No kind, so the character says nothing — it only colours an idle remark.
+  const weekly = (limitsData.windows || []).find((w) => w.key === 'weekly');
+  return weekly && !(weekly.burn && weekly.burn.trusted === false)
+    ? { calm: true, pct: windowShown(weekly) } : null;
+}
+
 function postBuddy(s, st, now) {
   const sessTok = usageData && s.session_id && usageData.bySession[s.session_id]
     ? usageRows(usageData.bySession[s.session_id]).reduce((a, r) => a + r.out, 0) : 0;
@@ -129,12 +162,105 @@ function postBuddy(s, st, now) {
     totalMs: s.started_at && s.ended_at ? s.ended_at - s.started_at : 0,
     tokensSession: sessTok,
     tokensToday: todayTok,
+    usage: buddyUsage(),
     agents: runningAgents(s, now).slice(0, 8).map((a) => ({
       type: a.type, desc: a.desc, tools: a.tools || 0, elapsedMs: now - (a.started_at || now),
     })),
   };
   if (buddy) buddy.post(lastBuddyData);
 }
+
+// How much of the plan is left. limits-scan.js reads the usage Claude Code
+// already caches in ~/.claude.json and dead-reckons it forward from the
+// transcripts; the macOS app runs the very same script. Child process, like
+// the usage scan, so a slow disk can never stall the editor.
+function refreshLimits() {
+  if (limitsBusy) return;
+  limitsBusy = true;
+  cp.execFile(process.execPath, [path.join(__dirname, 'limits-scan.js')], {
+    env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }),
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 30000,
+  }, (err, stdout) => {
+    limitsBusy = false;
+    if (err || !stdout) return;
+    try { limitsData = JSON.parse(stdout); render(); } catch { /* keep last data */ }
+  });
+}
+
+// The same thresholds the macOS app uses, so both halves of Claude Pulse
+// agree about when a number is worth worrying about.
+function limitSettings() {
+  const cfg = vscode.workspace.getConfiguration('claudePulse');
+  const n = (key, fallback, min, max) => {
+    const v = cfg.get(key);
+    return typeof v === 'number' && v >= min && v <= max ? v : fallback;
+  };
+  const weeklyWarn = n('limitWarnWeekly', 75, 1, 100);
+  const sessionWarn = n('limitWarnSession', 88, 1, 100);
+  return {
+    show: cfg.get('showLimits') !== false,
+    contextWarn: n('contextWarnTokens', 300000, 20000, Number.MAX_SAFE_INTEGER),
+    weekly: { watch: Math.max(1, weeklyWarn - 25), warn: weeklyWarn, critical: Math.min(100, weeklyWarn + 15) },
+    session: { watch: Math.max(1, sessionWarn - 18), warn: sessionWarn, critical: Math.min(100, sessionWarn + 8) },
+  };
+}
+
+function windowShown(w) {
+  const live = w.burn && typeof w.burn.live === 'number' ? w.burn.live : w.percent;
+  return Math.round(live);
+}
+
+/* Mirrors LimitPolicy.tier() in macos/Limits.swift: a high percentage only
+ * counts as a warning when this pace would actually empty the window before
+ * it refills — otherwise the indicator cries wolf and gets ignored. */
+function limitTier(w, cfg) {
+  // An aged-out reading describes a window that has already rolled over, so
+  // it gets no say — a stale 95% would be a false alarm.
+  if (w.burn && w.burn.trusted === false) return 0;
+  const t = w.key.indexOf('weekly') === 0 ? cfg.weekly : cfg.session;
+  const pct = windowShown(w);
+  const calibrated = !!(w.burn && w.burn.calibrated);
+  const beats = !!(w.burn && w.burn.beatsReset);
+  if (pct >= t.critical) return 3;
+  if (calibrated) {
+    if (beats) {
+      if (pct >= t.warn) return 3;
+      if (pct >= t.watch || pct >= 30) return 2;
+      return 1;
+    }
+    return pct >= t.watch ? 1 : 0;
+  }
+  if (pct >= t.warn) return 2;
+  return pct >= t.watch ? 1 : 0;
+}
+
+/* The worst window, and how bad. Returns null when there is nothing to say. */
+function limitWorst() {
+  if (!limitsData || !limitsData.available) return null;
+  const cfg = limitSettings();
+  if (!cfg.show) return null;
+  if (limitsData.blocked) return { tier: 4, blocked: limitsData.blocked, w: null };
+  let best = null;
+  for (const w of limitsData.windows || []) {
+    const tier = limitTier(w, cfg);
+    // Ties go to the window closest to running out, so the badge names the
+    // one that will actually bite.
+    if (!best || tier > best.tier || (tier === best.tier && tier > 0 && windowShown(w) > windowShown(best.w))) {
+      best = { tier, w };
+    }
+  }
+  return best && best.tier > 0 ? best : null;
+}
+
+function spanText(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s >= 86400) return Math.floor(s / 86400) + 'd ' + Math.floor((s % 86400) / 3600) + 'h';
+  if (s >= 3600) return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+  return Math.max(1, Math.floor(s / 60)) + 'm';
+}
+function untilText(msAt) { return spanText(msAt - Date.now()); }
+function agoText(ms) { return spanText(ms); }
 
 // Token usage comes from Claude Code's own transcript files — exact and
 // local. The scan runs in a child process so it can never block the UI.
@@ -324,19 +450,87 @@ function taskBar(done, total) {
   return '▰'.repeat(filled) + '▱'.repeat(10 - filled);
 }
 
+/* The plan-limit section of the tooltip. Says plainly when a figure is the
+ * last cached reading rather than a live estimate — Claude Code refreshes
+ * that cache on its own slow schedule, and an overstated number is worse
+ * than an honest one. */
+function limitTooltip(tip) {
+  const cfg = limitSettings();
+  if (!cfg.show) return tip;
+  if (!limitsData || !limitsData.available) {
+    tip.appendMarkdown('_Plan limits appear here once Claude Code has checked them._');
+    return tip;
+  }
+  tip.appendMarkdown('**Plan limits**\n\n');
+  if (limitsData.blocked) {
+    const b = limitsData.blocked;
+    const which = b.kind === 'five_hour' ? '5-hour' : b.kind === 'seven_day' ? 'weekly' : b.kind;
+    tip.appendMarkdown('- $(error) **blocked** — the ' + which + ' limit is used up' +
+      (b.resetsAt ? ', back in ' + untilText(b.resetsAt) : '') + '\n');
+  }
+  for (const w of limitsData.windows || []) {
+    let line;
+    if (w.burn && w.burn.trusted === false) {
+      line = '- **' + w.label + '** — _waiting for a fresh reading_' +
+        (w.resetsAt ? ' · refills in ' + untilText(w.resetsAt) : '');
+    } else {
+      line = '- **' + w.label + '** — ' + windowShown(w) + '%';
+      if (w.sharePercent) line += ' of its ' + Math.round(w.sharePercent) + '% share';
+      if (!(w.burn && w.burn.calibrated)) line += ' _(last checked)_';
+      if (w.resetsAt) line += ' · refills in ' + untilText(w.resetsAt);
+    }
+    tip.appendMarkdown(line + '\n');
+    const b = w.burn;
+    if (b && b.calibrated && b.perHour > 0.05 && b.exhaustAt) {
+      tip.appendMarkdown('  - ' + (b.beatsReset ? '$(warning) ' : '') + b.perHour.toFixed(1) +
+        '%/h → empty in ' + untilText(b.exhaustAt) + '\n');
+    }
+  }
+  const big = Object.keys(limitsData.sessions || {})
+    .map((k) => limitsData.sessions[k])
+    .filter((s) => s.ctx >= Math.min(120000, cfg.contextWarn))
+    .sort((a, b) => b.ctx - a.ctx)[0];
+  if (big) {
+    tip.appendMarkdown('\n**' + big.project + '** carries ' + fmtTok(big.ctx) + ' of context — ' +
+      Math.round((big.turn ? big.turn.contextShare : 0) * 100) + '% of every reply is re-reading it.' +
+      (big.ctx >= cfg.contextWarn ? ' `/compact` makes the next ones much cheaper.' : '') + '\n');
+  }
+  if (limitsData.stale && limitsData.ageMs) {
+    tip.appendMarkdown('\n_Claude Code last checked this ' + agoText(limitsData.ageMs) + ' ago._');
+  }
+  return tip;
+}
+
 function render() {
   if (!item) return;
   const t = getTimings();
   const showElapsed = t.showElapsed;
   const now = Date.now();
 
+  // The usage badge rides along with whatever else the item is showing. It
+  // must survive the idle state too: no session running is exactly the moment
+  // before the next one starts and spends the rest of the window.
+  const worst = limitWorst();
+  let badge = '';
+  if (worst) {
+    if (worst.blocked) {
+      badge = ' · $(error) ' + (worst.blocked.resetsAt ? untilText(worst.blocked.resetsAt) : 'limit');
+    } else {
+      const tag = worst.w.key === 'session' ? '5h' : worst.w.key === 'weekly' ? 'wk' : worst.w.label;
+      badge = ' · ' + (worst.tier >= 2 ? '$(warning) ' : '') + tag + ' ' + windowShown(worst.w) + '%';
+    }
+  }
+
   if (sessions.length === 0) {
     // Stay visible so the indicator never seems to vanish — a dim idle mark
     // simply means no Claude session belongs to this window right now.
-    item.backgroundColor = undefined;
+    item.backgroundColor = worst && worst.tier >= 3
+      ? new vscode.ThemeColor('statusBarItem.errorBackground')
+      : worst && worst.tier >= 2 ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
     item.color = undefined;
-    item.text = '$(sparkle) Claude';
-    item.tooltip = 'No Claude Code session in this workspace yet — start one and it will appear here.';
+    item.text = '$(sparkle) Claude' + badge;
+    item.tooltip = limitTooltip(
+      new vscode.MarkdownString('No Claude Code session in this workspace yet — start one and it will appear here.\n\n', true));
     item.show();
     postBuddy({}, 'idle', now);
     return;
@@ -384,6 +578,17 @@ function render() {
     item.color = new vscode.ThemeColor('charts.green');
   } else {
     item.text = '$(sparkle) Claude';
+  }
+
+  if (badge) {
+    item.text += badge;
+    // "Claude needs input" already owns the colour when it is showing — that
+    // is the more urgent thing. Otherwise the limit tier gets to set it.
+    if (!item.backgroundColor && worst.tier >= 3) {
+      item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    } else if (!item.backgroundColor && worst.tier >= 2) {
+      item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    }
   }
 
   const tip = new vscode.MarkdownString(undefined, true);
@@ -441,8 +646,9 @@ function render() {
       tip.appendMarkdown('**Last 7 days** — ' + fmtTok(weekOut) + ' out (' +
         week.map((r) => shortModel(r.model)).join(', ') + ')\n');
     }
-    tip.appendMarkdown('\n_Plan limit remaining (5 h / weekly) is not stored locally — run `/usage` inside Claude Code._');
   }
+  tip.appendMarkdown('\n---\n');
+  limitTooltip(tip);
   tip.appendMarkdown('\n\n_Click for sessions & full usage report_');
   item.tooltip = tip;
   item.show();
@@ -600,14 +806,76 @@ function activate(context) {
       items.push(sep('Last 7 days (all projects)'));
       items.push(...rowsFor(sumDays(usageData.byDay, 7)));
       items.push(sep('Plan limits'));
-      items.push({
-        label: '$(info) 5-hour / weekly remaining',
-        description: 'not stored locally — run /usage inside Claude Code',
-      });
+      if (limitsData && limitsData.available) {
+        if (limitsData.blocked) {
+          items.push({
+            label: '$(error) Blocked',
+            description: limitsData.blocked.resetsAt
+              ? 'back in ' + untilText(limitsData.blocked.resetsAt) : 'limit reached',
+          });
+        }
+        for (const w of limitsData.windows || []) {
+          const b = w.burn || {};
+          let d = w.resetsAt ? 'refills in ' + untilText(w.resetsAt) : '';
+          if (b.trusted === false) {
+            items.push({ label: w.label + ' — waiting for a fresh reading', description: d });
+            continue;
+          }
+          if (!b.calibrated) d += d ? ' · last checked' : 'last checked';
+          else if (b.perHour > 0.05) d += ' · ' + b.perHour.toFixed(1) + '%/h' + (b.beatsReset ? ' ⚠ runs out first' : '');
+          items.push({ label: w.label + ' — ' + windowShown(w) + '%', description: d });
+        }
+        for (const row of limitsData.breakdown || []) {
+          if (row.percent > 0) items.push({ label: '    ' + row.label, description: row.percent + '% of the week' });
+        }
+        const sessionsByCtx = Object.keys(limitsData.sessions || {})
+          .map((k) => limitsData.sessions[k]).filter((s) => s.ctx > 0).sort((a, b) => b.ctx - a.ctx);
+        if (sessionsByCtx.length) items.push(sep('Conversation size (what each reply re-reads)'));
+        for (const s of sessionsByCtx.slice(0, 5)) {
+          items.push({
+            label: s.project + ' — ' + fmtTok(s.ctx) + ' context',
+            description: Math.round((s.turn ? s.turn.contextShare : 0) * 100) + '% of each reply' +
+              (s.ctx >= limitSettings().contextWarn ? ' · worth running /compact' : ''),
+          });
+        }
+      } else {
+        items.push({ label: '$(info) Not available yet', description: 'Claude Code caches your usage as it runs' });
+      }
       await vscode.window.showQuickPick(items, {
         placeHolder: 'Claude token usage — exact, from local transcripts (no API calls)',
         matchOnDescription: true,
       });
+    })
+  );
+
+  // Usage under the Claude Code prompt. It is terminal chrome, not part of
+  // the conversation, so it costs nothing — and it is where you are looking
+  // when you run out.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudePulse.statusLine', async () => {
+      const settings = path.join(os.homedir(), '.claude', 'settings.json');
+      let installed = false;
+      try { installed = fs.readFileSync(settings, 'utf8').includes('claude-pulse/limits-scan.js'); } catch { /* none yet */ }
+      const verb = installed ? 'Remove' : 'Add';
+      const ok = await vscode.window.showInformationMessage(
+        installed
+          ? 'Remove the Claude Pulse status line from Claude Code?'
+          : 'Show your 5-hour and weekly usage under the Claude Code prompt? It costs no tokens, and ~/.claude/settings.json is backed up first.',
+        { modal: true }, verb);
+      if (ok !== verb) return;
+      cp.execFile(process.execPath,
+        [path.join(__dirname, 'scripts', 'install-statusline.js')].concat(installed ? ['--remove'] : []),
+        { env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }), timeout: 20000 },
+        (err, stdout, stderr) => {
+          if (err) {
+            vscode.window.showErrorMessage('Claude Pulse: ' + String(stderr || err.message).trim().split('\n').pop());
+            return;
+          }
+          vscode.window.showInformationMessage(installed
+            ? 'Claude Pulse: status line removed.'
+            : 'Claude Pulse: status line added — restart Claude Code to see it.');
+          void stdout;
+        });
     })
   );
 
@@ -645,6 +913,10 @@ function activate(context) {
   // Token usage scan: once shortly after startup, then every 30s (incremental).
   setTimeout(refreshUsage, 1500);
   usagePoll = setInterval(refreshUsage, 30000);
+  // Plan limits move slowly, but the local spend ledger the scan maintains
+  // wants regular passes to keep its burn rate honest.
+  setTimeout(refreshLimits, 2500);
+  limitsPoll = setInterval(refreshLimits, 60000);
 
   refresh();
 }
@@ -653,6 +925,7 @@ function deactivate() {
   if (pollTimer) clearInterval(pollTimer);
   if (tickTimer) clearInterval(tickTimer);
   if (usagePoll) clearInterval(usagePoll);
+  if (limitsPoll) clearInterval(limitsPoll);
 }
 
 module.exports = { activate, deactivate };
