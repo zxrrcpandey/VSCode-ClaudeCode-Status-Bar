@@ -9,9 +9,11 @@
  *  1. ~/.claude.json → "cachedUsageUtilization" is the only authoritative
  *     answer to "what percent of my weekly limit is gone" on this machine.
  *     Claude Code asks the server and caches it here. But it is a cache, not a
- *     meter: it has been observed unchanged for 45 minutes while two sessions
- *     were burning tokens hard. Trusting it alone would report 60% to someone
- *     who is actually at 95%. We only ever read it.
+ *     meter: it has been observed 17 hours out of date while sessions were
+ *     burning tokens hard — by which point a 5-hour window has rolled over
+ *     three times and the percentage describes a window that no longer exists.
+ *     Trusting it alone would report 60% to someone who is actually at 95%.
+ *     We only ever read it.
  *
  *  2. ~/.claude/projects/**\/*.jsonl — the transcripts, which are written as
  *     it happens. Summing their token usage into per-minute buckets gives a
@@ -20,13 +22,14 @@
  *     cached percentage can be carried forward to now.
  *
  * That is the whole idea: an authoritative anchor plus local dead reckoning.
- * Until there are two anchors to learn from, the scanner says so rather than
- * inventing a number.
+ * Until there are enough anchors to learn from, the scanner says so rather
+ * than inventing a number — and it refuses to learn from an interval it did
+ * not watch all of, or one whose step it cannot account for locally.
  *
  * It also measures each live session's context size, because a conversation
  * re-reads itself on every single turn and that is where the money actually
- * goes: on this machine, 1.18 billion cache-read tokens against 5.4 million
- * output tokens over two days.
+ * goes: on this machine, 1.70 billion cache-read tokens against 7.3 million
+ * output tokens over seven days.
  *
  * Runs under Node (the VS Code extension) or the macOS app's JavaScriptCore
  * runner, which has fs/path/os but no Buffer and no relative require — hence
@@ -51,6 +54,17 @@ const HISTORY = path.join(HOME, '.claude', 'claude-pulse', 'limits-history.json'
 // A cached reading older than this is reported as stale. Claude Code refreshes
 // it on its own slow schedule, so this is normal, not an error.
 const STALE_MS = 20 * 60 * 1000;
+// Past this fraction of a window's own length, a reading is history rather
+// than status, and must not be shown as the current figure.
+//
+// Not a hypothetical margin. Claude Code decides when to refresh this cache by
+// a sampled feature flag — `tengu_agile_glade.policy_limits_poll` was 0.01 on
+// the machine this was written on — so readings 35 hours old are ordinary. A
+// 35-hour-old weekly reading of 8% sat in a banner while the account's own
+// usage page told a different story, and in a tenth of a 5-hour window a heavy
+// session can move it twenty points. Either the local ledger can carry the
+// reading forward, or the honest answer is that we do not know.
+const TRUST_FRACTION = 0.1;
 // Transcripts touched this recently are tracked. It has to cover the longest
 // gap between two cached readings — which has been seen at 17 hours — or a
 // session that went quiet in between would be dropped, re-primed near its end
@@ -75,6 +89,11 @@ const IDS_PER_FILE = 24;
 const ID_KEY_LEN = 16;
 // Enough of a session's tail to hold its last few records.
 const TAIL_BYTES = 256 * 1024;
+// How many turns the context share should average over before it is described
+// as what every reply costs, and how far back to look for them when a tail of
+// giant tool results holds fewer.
+const MIN_SHARE_TURNS = 3;
+const SHARE_TAIL_BYTES = 2 * 1024 * 1024;
 // The spend rate, measured over the most recent completed stretch. Short
 // enough to react, long enough not to swing on a single big turn.
 const RATE_WINDOW_MS = 30 * 60 * 1000;
@@ -83,6 +102,28 @@ const MIN_RATE_SPAN_MS = 5 * 60 * 1000;
 // that the server reports whole numbers.
 const MIN_CAL_STEP = 2;
 const MAX_FACTORS = 24;
+// How often the "we were here" marker is persisted while nothing at all is
+// being spent. It only has to be accurate to within hours, and rewriting the
+// history file on every idle pass is what the change flag exists to avoid.
+const HEARTBEAT_MS = 30 * 60 * 1000;
+// A pair also needs enough local spend to plausibly explain its step. The
+// server's percentage covers the whole account; this ledger only sees Claude
+// Code. A trivial local turn next to a three-point move means the move came
+// from somewhere invisible here — claude.ai, Cowork, or another machine.
+const MIN_CAL_UNITS = 50000;
+// Below this many pairs there is no median to take, so nothing is claimed.
+// Samples still accumulate; only the confidence waits.
+const MIN_CAL_SAMPLES = 3;
+// Once there is a median worth comparing against, a sample this far from it is
+// an artefact rather than a measurement.
+const FACTOR_OUTLIER = 3;
+// A factor is percentage-points-per-unit, so it is inversely proportional to
+// the size of the plan's budget: changing tier invalidates every sample, and
+// upgrading is exactly what someone who keeps hitting the limit does.
+const FACTOR_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+// A projection past this is not a warning, it is a broken factor. Say nothing
+// rather than claim the week is gone, and throw the factor away.
+const IMPLAUSIBLE_PERCENT = 150;
 
 // Relative price per token. Output is the expensive part and a cached read is
 // a tenth of a fresh input token. These are ratios, not prices.
@@ -92,12 +133,18 @@ const W_OUT = 5, W_IN = 1, W_CACHE_WRITE = 1.25, W_CACHE_READ = 0.1;
 // calibration below divides any constant error straight back out, and the
 // model catalog on disk carries no prices. Fable is flagged in Claude Code's
 // own catalog as drawing down usage much faster than Opus.
+// The third element names the class a per-model window is calibrated against:
+// a window capped to one model only moves when that model is used, so dividing
+// its step by the whole account's spend would learn a factor many times too
+// small and the window that blocks first would be the one that never warns.
 const MODEL_WEIGHT = [
-  [/fable/, 3],
-  [/opus/, 1.7],
-  [/sonnet/, 1],
-  [/haiku/, 0.33],
+  [/fable/, 3, 'fable'],
+  [/opus/, 1.7, 'opus'],
+  [/sonnet/, 1, 'sonnet'],
+  [/haiku/, 0.33, 'haiku'],
 ];
+// Every bucket totals this key as well as the per-model one.
+const ALL = 'a';
 
 function readJSON(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
@@ -117,6 +164,18 @@ function modelWeight(model) {
   const m = String(model || '').toLowerCase();
   for (const [re, w] of MODEL_WEIGHT) if (re.test(m)) return w;
   return 1;
+}
+
+/* Which per-model total this turn also counts towards. */
+function modelClass(model) {
+  const m = String(model || '').toLowerCase();
+  for (const [re, , cls] of MODEL_WEIGHT) if (re.test(m)) return cls;
+  return 'other';
+}
+
+/* The class a window's own spend lives in, or ALL for a whole-account one. */
+function classFor(win) {
+  return win.model ? modelClass(win.model) : ALL;
 }
 
 /* What one assistant turn cost, in units proportional to money. */
@@ -219,25 +278,34 @@ function rollForward(windows, now) {
 // -------------------------------------------------------------- reading files
 
 /* Complete lines from a byte range. The macOS runner has no Buffer, so it
- * provides this natively; both forms return whole lines only. */
+ * provides this natively; both forms return whole lines only.
+ *
+ * A file that cannot be opened degrades to "no new bytes", exactly as a failed
+ * read already did. It is not a hypothetical: one session run under sudo, a
+ * restored backup, or a transcript deleted between the statSync in walk() and
+ * the open here is enough, and an escaping throw would take the whole scan
+ * with it — silently, because every caller treats no output as a transient
+ * blip and keeps showing the last reading it had. */
 function readLines(file, offset, len) {
   if (len <= 0) return { text: '', consumed: 0 };
-  if (typeof __pulseReadLines === 'function') {
-    const r = __pulseReadLines(file, offset, len) || {};
-    return { text: r.text || '', consumed: num(r.consumed) };
-  }
-  const fd = fs.openSync(file, 'r');
   try {
-    const buf = Buffer.alloc(len);
-    const n = fs.readSync(fd, buf, 0, len, offset);
-    if (n <= 0) return { text: '', consumed: 0 };
-    const end = buf.lastIndexOf(10, n - 1);
-    if (end < 0) return { text: '', consumed: 0 };
-    return { text: buf.toString('utf8', 0, end), consumed: end + 1 };
+    if (typeof __pulseReadLines === 'function') {
+      const r = __pulseReadLines(file, offset, len) || {};
+      return { text: r.text || '', consumed: num(r.consumed) };
+    }
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      const n = fs.readSync(fd, buf, 0, len, offset);
+      if (n <= 0) return { text: '', consumed: 0 };
+      const end = buf.lastIndexOf(10, n - 1);
+      if (end < 0) return { text: '', consumed: 0 };
+      return { text: buf.toString('utf8', 0, end), consumed: end + 1 };
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch {
     return { text: '', consumed: 0 };
-  } finally {
-    fs.closeSync(fd);
   }
 }
 
@@ -278,17 +346,39 @@ function updateLedger(hist, now) {
   // after this, because before it there are no buckets to total up.
   if (!num(hist.from)) hist.from = now;
 
+  // Whether this pass had to skip over spend it will never count. `hist.from`
+  // cannot answer that: it only says the history file is older than the
+  // interval, not that every byte written during the interval was read.
+  //
+  // Being closed for a while is not itself a gap — the records carry their own
+  // timestamps, so catching up on a file fills in the minutes it was away for.
+  // What loses spend is skipping bytes, which the flags below catch exactly.
+  // The one thing they cannot see is a session that was written and then went
+  // quiet for longer than we keep offsets, so it never comes back in walk().
+  const prevSeen = num(hist.seen);
+  let gap = !prevSeen || now - prevSeen > LEDGER_WINDOW_MS;
+
+  // A turn's units land in the whole-account total and in its model's own.
+  const credit = (minute, cls, units) => {
+    let b = buckets[minute];
+    if (!b || typeof b !== 'object') b = buckets[minute] = {};
+    b[ALL] = num(b[ALL]) + units;
+    b[cls] = num(b[cls]) + units;
+  };
+
   for (const { file, size } of walk(PROJECTS, [], cutoff)) {
     let rec = hist.files[file];
     if (!rec || typeof rec.off !== 'number') {
       // New file: start near the end. The past is already reflected in the
-      // server's percentage; what we need from here on is the rate.
+      // server's percentage; what we need from here on is the rate. Anything
+      // skipped to get there is spend no bucket will ever hold.
       rec = { off: Math.max(0, size - LEDGER_PRIME), ids: {}, idQ: [] };
+      if (rec.off > 0) gap = true;
     }
     // Truncated, rotated or replaced.
-    if (size < rec.off) rec = { off: Math.max(0, size - LEDGER_PRIME), ids: {}, idQ: [] };
+    if (size < rec.off) { rec = { off: Math.max(0, size - LEDGER_PRIME), ids: {}, idQ: [] }; gap = true; }
     // Far behind: skip forward rather than reading hundreds of megabytes.
-    if (size - rec.off > LEDGER_MAX_READ) rec.off = size - LEDGER_MAX_READ;
+    if (size - rec.off > LEDGER_MAX_READ) { rec.off = size - LEDGER_MAX_READ; gap = true; }
     if (!rec.ids) { rec.ids = {}; rec.idQ = []; }
 
     if (size > rec.off) {
@@ -305,6 +395,7 @@ function updateLedger(hist, now) {
           if (!at) continue;
           const units = turnUnits(m.usage, m.model);
           if (!(units > 0)) continue;
+          const cls = modelClass(m.model);
           const id = typeof m.id === 'string' ? m.id.slice(-ID_KEY_LEN) : null;
           const minute = Math.floor(at / BUCKET_MS);
           if (id && rec.ids[id]) {
@@ -312,15 +403,15 @@ function updateLedger(hist, now) {
             // the bucket it was first counted in so history stays stable.
             const prev = rec.ids[id];
             if (units > prev.u) {
-              buckets[prev.m] = num(buckets[prev.m]) + (units - prev.u);
+              credit(prev.m, prev.c || cls, units - prev.u);
               prev.u = units;
               changed = true;
             }
           } else {
-            buckets[minute] = num(buckets[minute]) + units;
+            credit(minute, cls, units);
             changed = true;
             if (id) {
-              rec.ids[id] = { m: minute, u: units };
+              rec.ids[id] = { m: minute, u: units, c: cls };
               rec.idQ.push(id);
               if (rec.idQ.length > IDS_PER_FILE) delete rec.ids[rec.idQ.shift()];
             }
@@ -340,6 +431,7 @@ function updateLedger(hist, now) {
         changed = true;
       } else if (size - rec.off >= LEDGER_MAX_READ) {
         changed = true;
+        gap = true;
         // No newline anywhere in a full window means one line longer than the
         // window — a huge tool result on a single line will do it. The offset
         // could never advance past it, so this file would be re-read forever.
@@ -350,31 +442,73 @@ function updateLedger(hist, now) {
     rec.size = size;
     keep[file] = rec;
   }
-  if (Object.keys(keep).length !== Object.keys(hist.files).length) changed = true;
+  // A file whose mtime left the window takes its offset with it. If it still
+  // had unread bytes, those are spend nothing counted.
+  for (const f of Object.keys(hist.files)) {
+    if (keep[f]) continue;
+    changed = true;
+    const old = hist.files[f];
+    if (old && num(old.off) < num(old.size)) gap = true;
+  }
   hist.files = keep;
 
   const oldest = Math.floor((now - BUCKETS_KEEP_MS) / BUCKET_MS);
   for (const k of Object.keys(buckets)) if (Number(k) < oldest) { delete buckets[k]; changed = true; }
+
+  // The end of the most recent gap. Calibration refuses any interval that
+  // began before it; once a newer anchor lands, this stops blocking by itself.
+  if (gap && now > num(hist.gapAt)) { hist.gapAt = now; changed = true; }
+  if (now - prevSeen > HEARTBEAT_MS) changed = true;
+  hist.seen = now;
   return { stats, changed };
 }
 
-/* Units spent in (from, to]. */
-function unitsBetween(buckets, from, to) {
+/* Units spent in (from, to], for one model class or for the whole account. */
+function unitsBetween(buckets, from, to, cls) {
+  const key = cls || ALL;
   let total = 0;
   const a = Math.floor(from / BUCKET_MS), b = Math.floor(to / BUCKET_MS);
   for (const k of Object.keys(buckets)) {
     const m = Number(k);
-    if (m > a && m <= b) total += num(buckets[k]);
+    if (m > a && m <= b) {
+      const v = buckets[k];
+      total += typeof v === 'object' && v ? num(v[key]) : 0;
+    }
   }
   return total;
 }
 
 // ------------------------------------------------------------ the calibration
 
+/* Samples still usable: learned on this plan tier, and recent enough. A
+ * factor is percentage-points-per-unit, so it scales with the plan's budget —
+ * an upgrade makes every earlier sample wrong by the ratio of the two. */
+function usableFactors(list, plan, now) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const s of list) {
+    if (!s || !(num(s.f) > 0)) continue;
+    if (plan && s.tier && s.tier !== plan) continue;
+    if (num(s.t) && now - num(s.t) > FACTOR_MAX_AGE_MS) continue;
+    out.push(num(s.f));
+  }
+  return out;
+}
+
 /* What one percent of a window costs, learned by pairing two cached readings
  * with the tokens spent between them. Several pairs, median, so one odd
- * interval cannot skew it. */
-function calibrate(hist, windows, fetchedAt, now) {
+ * interval cannot skew it — which is only true once there are several, so
+ * nothing is claimed below MIN_CAL_SAMPLES.
+ *
+ * A pair is only usable if this ledger can actually account for the step it
+ * describes. Three ways it cannot, each of which would teach a factor several
+ * times too large and then assert it with a full-screen banner:
+ *
+ *   - bytes were skipped during the interval (hist.gapAt),
+ *   - the step came from a surface with no local transcript at all — claude.ai
+ *     and Cowork are 12% of this account's week, and they arrive in bursts,
+ *   - there was barely any local spend to divide by. */
+function calibrate(hist, windows, fetchedAt, now, plan, ccShare) {
   let changed = false;
   if (!Array.isArray(hist.anchors)) { hist.anchors = []; changed = true; }
   if (!hist.factors || typeof hist.factors !== 'object') { hist.factors = {}; changed = true; }
@@ -388,31 +522,43 @@ function calibrate(hist, windows, fetchedAt, now) {
     hist.anchors.sort((a, b) => a.t - b.t);
     if (hist.anchors.length > 60) hist.anchors.splice(0, hist.anchors.length - 60);
 
-    // Learn from the step we just saw, if we were watching for all of it.
-    if (prev && prev.t < fetchedAt && num(hist.from) && prev.t >= hist.from) {
-      const units = unitsBetween(hist.buckets, prev.t, fetchedAt);
-      if (units > 0) {
-        for (const win of windows) {
-          const before = prev.w && prev.w[win.key];
-          if (!before || typeof before.p !== 'number') continue;
-          // Same window generation only: across a reset the percentage falls.
-          if (win.resetsAt && before.r && before.r !== win.resetsAt) continue;
-          const step = win.percent - before.p;
-          if (step < MIN_CAL_STEP) continue;
-          const list = Array.isArray(hist.factors[win.key]) ? hist.factors[win.key] : [];
-          list.push(step / units);
-          if (list.length > MAX_FACTORS) list.splice(0, list.length - MAX_FACTORS);
-          hist.factors[win.key] = list;
+    // Learn from the step we just saw, if we read every byte written during it.
+    const watched = prev && prev.t < fetchedAt && num(hist.from) && prev.t >= hist.from;
+    if (watched && !(num(hist.gapAt) > prev.t)) {
+      for (const win of windows) {
+        const before = prev.w && prev.w[win.key];
+        if (!before || typeof before.p !== 'number') continue;
+        // Same window generation only: across a reset the percentage falls.
+        if (win.resetsAt && before.r && before.r !== win.resetsAt) continue;
+        let step = win.percent - before.p;
+        if (step < MIN_CAL_STEP) continue;
+        // A weekly step covers the whole account; the ledger sees only Claude
+        // Code. The server's own breakdown says how much of the week that is.
+        if (ccShare > 0 && win.key.indexOf('weekly') === 0) step *= ccShare;
+        // A per-model window only moves when that model is used, so it is
+        // calibrated against that model's own spend.
+        const units = unitsBetween(hist.buckets, prev.t, fetchedAt, classFor(win));
+        if (units < MIN_CAL_UNITS) continue;
+        const f = step / units;
+        const list = Array.isArray(hist.factors[win.key]) ? hist.factors[win.key] : [];
+        // Once there is a median to compare against, keep the sample honest.
+        const known = usableFactors(list, plan, now);
+        if (known.length >= MIN_CAL_SAMPLES) {
+          const mid = median(known);
+          if (mid > 0 && (f > mid * FACTOR_OUTLIER || f < mid / FACTOR_OUTLIER)) continue;
         }
+        list.push({ f, tier: plan || null, t: fetchedAt });
+        if (list.length > MAX_FACTORS) list.splice(0, list.length - MAX_FACTORS);
+        hist.factors[win.key] = list;
       }
     }
   }
 
   const out = {};
   for (const win of windows) {
-    const list = hist.factors[win.key];
-    const f = Array.isArray(list) && list.length ? median(list) : 0;
-    if (f > 0) out[win.key] = { factor: f, samples: list.length };
+    const usable = usableFactors(hist.factors[win.key], plan, now);
+    const f = usable.length >= MIN_CAL_SAMPLES ? median(usable) : 0;
+    if (f > 0) out[win.key] = { factor: f, samples: usable.length };
   }
   return { cal: out, changed: changed };
 }
@@ -424,11 +570,12 @@ function calibrate(hist, windows, fetchedAt, now) {
  * confidently wrong gauge is worse than an honest "not yet". */
 function project(win, cal, buckets, fetchedAt, now, watchingSince) {
   const c = cal[win.key];
+  const cls = classFor(win);
   // Measure over the rate window, or over however long we have been watching
   // if that is shorter — otherwise a scanner started two minutes ago divides
   // two minutes of spend by half an hour and reports a reassuring zero.
   const span = Math.max(MIN_RATE_SPAN_MS, Math.min(RATE_WINDOW_MS, now - watchingSince));
-  const unitsPerHour = unitsBetween(buckets, now - span, now) / (span / 3600000);
+  const unitsPerHour = unitsBetween(buckets, now - span, now, cls) / (span / 3600000);
 
   const res = {
     unitsPerHour,
@@ -439,6 +586,9 @@ function project(win, cal, buckets, fetchedAt, now, watchingSince) {
     // windows ago. Repeating "95%" then would be a false alarm, which is
     // exactly how a warning loses its credibility.
     expired: !!win.expired,
+    // Old enough that it no longer describes this window, even though the
+    // window itself has not rolled over.
+    outdated: false,
     // Is there any number here worth showing at all?
     trusted: !win.expired,
     live: null,
@@ -448,7 +598,17 @@ function project(win, cal, buckets, fetchedAt, now, watchingSince) {
     beatsReset: false,
     calibrated: !!c,
     calibrationSamples: c ? c.samples : 0,
+    // Set when the factor produces a figure that cannot be true. Nothing is
+    // shown from it, and scan() throws the factor away so it can relearn.
+    implausible: false,
   };
+
+  const period = periodFor(win.key);
+  if (!win.expired && (!fetchedAt || (period > 0 && now - fetchedAt > period * TRUST_FRACTION))) {
+    res.outdated = true;
+    // Only the ledger can rescue this, by carrying the reading forward below.
+    res.trusted = false;
+  }
   if (!c) return res;
 
   // After a rollover the window restarted at zero, so measure from the reset
@@ -458,9 +618,20 @@ function project(win, cal, buckets, fetchedAt, now, watchingSince) {
   const base = win.expired ? 0 : win.percent;
   if (win.expired && !(from && watchingSince <= from)) return res;
 
-  const since = from ? unitsBetween(buckets, from, now) : 0;
+  const since = from ? unitsBetween(buckets, from, now, cls) : 0;
   // Never let dead reckoning walk the number backwards: the anchor is a floor.
-  res.live = Math.min(200, base + Math.max(0, since * c.factor));
+  const raw = base + Math.max(0, since * c.factor);
+  // A figure this far past the limit is not news, it is a wrong factor. The
+  // old clamp turned it into a confident "200%", which the UI then rendered as
+  // the most severe warning it has — the loudest possible way to be wrong.
+  if (raw > IMPLAUSIBLE_PERCENT) {
+    res.implausible = true;
+    res.calibrated = false;
+    return res;
+  }
+  // Past 100 the projection says nothing useful, but the anchor is never
+  // walked back: an account already over its limit on credits stays over.
+  res.live = Math.max(base, Math.min(100, raw));
   res.trusted = true;
   res.perHour = unitsPerHour * c.factor;
 
@@ -521,22 +692,49 @@ function applyUsage(out, usage, model, at, effort) {
   out.at = at;
   out.model = model;
   out.effort = effort;
-  out.turn = {
-    cost,
-    // How much of a turn goes on re-reading what was already said. Past
-    // roughly half, compacting is the cheapest thing available.
-    contextShare: cost > 0 ? (cr * W_CACHE_READ) / cost : 0,
-    out: o, in: inp + cw, cacheRead: cr,
-  };
+  out.turn = { cost, contextShare: 0, turns: 0, out: o, in: inp + cw, cacheRead: cr };
+}
+
+/* How much of a reply goes on re-reading what was already said, totalled over
+ * the recent turns rather than taken from the newest one.
+ *
+ * One turn is not a sound basis for a sentence about every turn: output
+ * carries five times the weight of a cached read, so the same conversation at
+ * the same size reads as 97% after "yes, that's right" and 43% after a long
+ * patch. Totalling the turns measures the conversation instead of the reply. */
+function addRecent(agg, usage) {
+  const inp = num(usage.input_tokens), cw = num(usage.cache_creation_input_tokens),
+    cr = num(usage.cache_read_input_tokens), o = num(usage.output_tokens);
+  if (inp + cw + cr <= 0) return;
+  agg.cost += o * W_OUT + inp * W_IN + cw * W_CACHE_WRITE + cr * W_CACHE_READ;
+  agg.cacheRead += cr;
+  agg.turns += 1;
 }
 
 /* The live context size, the last compaction, and any rejection. Only
  * main-conversation records count towards context: subagent traffic is marked
  * with isSidechain and carries its own separate context. */
 function sessionStats(file, seed) {
+  let r = statsOverTail(file, TAIL_BYTES, seed);
+  // A tail made of a few enormous tool results can hold almost no turns, and
+  // one turn cannot support a claim about every turn. Reach further back once.
+  if (r.turn && r.turn.turns < MIN_SHARE_TURNS) {
+    let size = 0;
+    try { size = fs.statSync(file).size; } catch { /* keep what we have */ }
+    if (size > TAIL_BYTES) {
+      const wider = statsOverTail(file, SHARE_TAIL_BYTES, seed);
+      if (wider.turn && wider.turn.turns > r.turn.turns) r = wider;
+    }
+  }
+  return r;
+}
+
+function statsOverTail(file, bytes, seed) {
   const out = { ctx: 0, model: null, effort: null, at: 0, turn: null,
                 compactedAt: 0, compactTrigger: null, preTokens: null, postTokens: null, blocked: null };
-  for (const line of tailOf(file)) {
+  const agg = { cost: 0, cacheRead: 0, turns: 0 };
+  const seenIds = {};
+  for (const line of tailOf(file, bytes)) {
     if (!line || line.charCodeAt(0) !== 123) continue;         // '{'
     let j;
     try { j = JSON.parse(line); } catch { continue; }
@@ -551,6 +749,10 @@ function sessionStats(file, seed) {
         out.preTokens = num(meta.preTokens) || null;
         out.postTokens = num(meta.postTokens) || null;
       }
+      // Turns before a compaction were paying for a conversation that no
+      // longer exists. Counting them would keep asking for a /compact that
+      // has just happened.
+      agg.cost = 0; agg.cacheRead = 0; agg.turns = 0;
       continue;
     }
 
@@ -571,18 +773,41 @@ function sessionStats(file, seed) {
     if (!m || !m.usage) continue;
     const at = ms(j.timestamp);
     if (at < out.at) continue;
+    // One turn is written as several lines, each repeating the same usage.
+    const id = typeof m.id === 'string' ? m.id.slice(-ID_KEY_LEN) : null;
+    if (!id || !seenIds[id]) {
+      if (id) seenIds[id] = true;
+      addRecent(agg, m.usage);
+    }
     applyUsage(out, m.usage, m.model || null, at, j.effort || null);
   }
   // The ledger already read this file's newest bytes this pass; prefer that
   // when it is fresher than anything in the tail.
   if (seed && seed.at >= out.at) applyUsage(out, seed.usage, seed.model, seed.at, seed.effort);
+  // A compaction after the newest turn has already replaced the context, so
+  // the size to report is what it kept, not what it dropped. Otherwise the
+  // moment someone does as they were asked, Pulse asks again — this session
+  // compacted 241k down to 8k and the newest turn still describes the 241k.
+  if (out.compactedAt > out.at && num(out.postTokens) > 0) {
+    out.ctx = out.postTokens;
+    out.turn = null;                       // nothing measured since
+  }
+  if (out.turn) {
+    out.turn.turns = agg.turns;
+    out.turn.contextShare = agg.cost > 0 ? (agg.cacheRead * W_CACHE_READ) / agg.cost
+      : (out.turn.cost > 0 ? (out.turn.cacheRead * W_CACHE_READ) / out.turn.cost : 0);
+  }
+  // A successful turn after a rejection is proof the session recovered. The
+  // clock alone cannot establish that: a rejection with no resetsAt would
+  // stand for ever, and a blocked report suppresses every other warning.
+  if (out.blocked && out.at > out.blocked.at) out.blocked = null;
   return out;
 }
 
-function tailOf(file) {
+function tailOf(file, bytes) {
   let size = 0;
   try { size = fs.statSync(file).size; } catch { return []; }
-  const start = Math.max(0, size - TAIL_BYTES);
+  const start = Math.max(0, size - (bytes || TAIL_BYTES));
   const chunk = readLines(file, start, size - start);
   const lines = chunk.text.split('\n');
   if (start > 0) lines.shift();            // the first line is cut mid-way
@@ -633,21 +858,43 @@ function scan() {
   const util = (cached && cached.utilization) || null;
   const fetchedAt = cached ? num(cached.fetchedAtMs) : 0;
 
+  const account = cfg.oauthAccount || {};
+  const plan = typeof account.organizationRateLimitTier === 'string' ? account.organizationRateLimitTier : null;
+
+  // Where the week went, by surface, from the server's own breakdown. These
+  // are shares of the week's usage and sum to 100 — not shares of the limit.
+  const breakdown = util && util.seven_day_breakdown && Array.isArray(util.seven_day_breakdown.rows)
+    ? util.seven_day_breakdown.rows
+      .filter((r) => r && typeof r.percent === 'number')
+      .map((r) => ({ key: r.key, label: r.display_name || r.key, percent: r.percent }))
+    : [];
+  // How much of the account's own spend this ledger can see at all.
+  const ccRow = breakdown.find((r) => r.key === 'claude_code');
+  const ccShare = ccRow && ccRow.percent > 0 ? ccRow.percent / 100 : 0;
+
   let hist = readJSON(HISTORY);
   if (!hist || typeof hist !== 'object') hist = {};
-  if (hist.v !== 2) hist = { v: 2, buckets: {}, files: {}, anchors: [], factors: {}, from: null };
+  // v3: buckets hold per-model totals and factors carry their plan tier, so a
+  // v2 reader and a v3 reader must not share a file.
+  if (hist.v !== 3) hist = { v: 3, buckets: {}, files: {}, anchors: [], factors: {}, from: null };
 
   const ledger = updateLedger(hist, now);
   const ledgerStats = ledger.stats;
   const windows = util ? windowsFrom(util) : [];
   rollForward(windows, now);
-  const calibration = calibrate(hist, windows, fetchedAt, now);
+  const calibration = calibrate(hist, windows, fetchedAt, now, plan, ccShare);
   const cal = calibration.cal;
   const watchingSince = num(hist.from) || now;
-  for (const w of windows) w.burn = project(w, cal, hist.buckets, fetchedAt, now, watchingSince);
+  let dropped = false;
+  for (const w of windows) {
+    w.burn = project(w, cal, hist.buckets, fetchedAt, now, watchingSince);
+    // The factor produced something that cannot be true, so it is wrong. Drop
+    // it and start again rather than carry it for days inside a median.
+    if (w.burn.implausible && hist.factors[w.key]) { delete hist.factors[w.key]; dropped = true; }
+  }
   // Several copies of this run on a timer — the menu bar app plus one per
   // VS Code window — so an unchanged pass must not rewrite the file.
-  if (ledger.changed || calibration.changed) saveHistory(hist);
+  if (ledger.changed || calibration.changed || dropped) saveHistory(hist);
 
   const sessions = liveSessions(ledgerStats);
 
@@ -660,8 +907,10 @@ function scan() {
   }
   // Only while it still stands — once the window has reset it is history.
   if (blocked && blocked.resetsAt && blocked.resetsAt < now) blocked = null;
+  // A rejection that never said when it frees up cannot stand indefinitely:
+  // the longest window it could name is the 5-hour one.
+  if (blocked && !blocked.resetsAt && now - blocked.at > 5 * 3600000) blocked = null;
 
-  const account = cfg.oauthAccount || {};
   const extra = (util && util.extra_usage) || null;
   const spentLastHour = unitsBetween(hist.buckets, now - 3600000, now);
 
@@ -673,15 +922,10 @@ function scan() {
     // No usage cache at all: an older Claude Code, a logged-out install, or an
     // API-key user with no plan limits to report.
     available: !!util,
-    plan: typeof account.organizationRateLimitTier === 'string' ? account.organizationRateLimitTier : null,
+    plan,
     windows,
     blocked,
-    // Where the week went, by surface, from the server's own breakdown.
-    breakdown: util && util.seven_day_breakdown && Array.isArray(util.seven_day_breakdown.rows)
-      ? util.seven_day_breakdown.rows
-        .filter((r) => r && typeof r.percent === 'number')
-        .map((r) => ({ key: r.key, label: r.display_name || r.key, percent: r.percent }))
-      : [],
+    breakdown,
     windowStartedAt: util && util.seven_day_breakdown ? ms(util.seven_day_breakdown.window_started_at) : 0,
     // Credits are the fallback when a limit hits; worth saying when there is
     // nothing to fall back on.
@@ -706,14 +950,23 @@ function statusLine(r) {
   if (r.blocked) {
     bits.push('⛔ limit reached');
   } else {
+    let shown = 0;
     for (const w of r.windows) {
       if (w.key !== 'session' && w.key !== 'weekly') continue;
       // Nothing worth printing for a window whose reading has aged out.
       if (!w.burn || !w.burn.trusted) continue;
-      const live = w.burn.live !== null ? Math.round(w.burn.live) : w.percent;
+      shown++;
+      const projected = w.burn.live !== null;
+      const live = projected ? Math.round(w.burn.live) : w.percent;
       const tag = w.key === 'session' ? '5h' : 'wk';
-      bits.push((w.burn.beatsReset ? '⚠ ' : '') + tag + ' ' + live + '%');
+      // "~" means carried forward from the last cached reading rather than
+      // read from it, so nobody is surprised when /usage says something else.
+      bits.push((w.burn.beatsReset ? '⚠ ' : '') + tag + ' ' + (projected ? '~' : '') + live + '%');
     }
+    // Claude Code refreshes its own usage cache on a sampled schedule, which
+    // can leave it a day or more behind. Saying so here is worth more than a
+    // stale number, because the command that fixes it is typed right here.
+    if (!shown) bits.push('usage unknown — run /usage');
   }
   const big = Object.keys(r.sessions)
     .map((k) => r.sessions[k])
@@ -728,7 +981,7 @@ function statusLine(r) {
 
 const isNode = typeof module !== 'undefined' && !!module.exports;
 if (isNode) {
-  module.exports = { scan, statusLine, windowsFrom, sessionStats, turnUnits, modelWeight };
+  module.exports = { scan, statusLine, windowsFrom, sessionStats, turnUnits, modelWeight, modelClass };
 }
 if (!isNode || require.main === module) {
   const argv = (typeof process !== 'undefined' && process.argv) || [];

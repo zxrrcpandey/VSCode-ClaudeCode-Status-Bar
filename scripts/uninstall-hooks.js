@@ -15,11 +15,23 @@ const os = require('os');
 const HOME = os.homedir();
 const SETTINGS = path.join(HOME, '.claude', 'settings.json');
 const PULSE_DIR = path.join(HOME, '.claude', 'claude-pulse');
+const AGENT = path.join(HOME, 'Library', 'LaunchAgents', 'com.warroom.claude-pulse.plist');
 // Both flavours: `node ".../claude-pulse/hook.js"` and the native runner.
 const MARKERS = [path.join('claude-pulse', 'hook.js'), path.join('claude-pulse', 'pulse-hook')];
+const STATUSLINE_MARKER = path.join('claude-pulse', 'limits-scan.js');
 
 function isPulseCommand(h) {
   return h && typeof h.command === 'string' && MARKERS.some((m) => h.command.includes(m));
+}
+
+/* The status line runs `~/.claude/claude-pulse/pulse-hook run …limits-scan.js`,
+ * and this script deletes that whole directory. Leaving the setting behind
+ * means Claude Code spawns a missing executable on every prompt render — exit
+ * 127, a blank status line, and nothing naming Claude Pulse as the cause. */
+function isPulseStatusLine(sl) {
+  if (!sl || typeof sl.command !== 'string') return false;
+  return sl.command.includes(STATUSLINE_MARKER)
+    || (sl.command.includes('claude-pulse') && sl.command.includes('--statusline'));
 }
 
 function withoutPulse(entries) {
@@ -56,11 +68,28 @@ function main() {
       }
       if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
     }
+    if (isPulseStatusLine(settings.statusLine)) {
+      delete settings.statusLine;
+      console.log('Removed the Claude Pulse status line from ' + SETTINGS);
+    }
     writeFileAtomic(SETTINGS, JSON.stringify(settings, null, 2) + '\n');
     console.log('Removed Claude Pulse hooks from ' + SETTINGS + ' (backup: ' + backup + ')');
   }
   fs.rmSync(PULSE_DIR, { recursive: true, force: true });
   console.log('Removed ' + PULSE_DIR);
+  // The app removes this itself when it can, but dragging it to the Trash is
+  // the expected way to uninstall a DMG app — and a LaunchAgent left in the
+  // user's own home folder would have launchd chasing a deleted executable at
+  // every login for ever. Unlinking only: this also runs under JavaScriptCore,
+  // which has no child_process.
+  if (fs.existsSync(AGENT)) {
+    try {
+      fs.unlinkSync(AGENT);
+      console.log('Removed the start-at-login agent ' + AGENT);
+    } catch (e) {
+      console.log('Could not remove ' + AGENT + ' — delete it by hand to stop it starting at login.');
+    }
+  }
   console.log('To remove the extension: delete the warroom.claude-pulse folder in ~/.vscode/extensions/');
 }
 

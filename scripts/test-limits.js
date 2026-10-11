@@ -176,9 +176,17 @@ console.log('\nlimits-scan.js\n');
   ok('live context = input + cache write + cache read of the newest main turn', !!s && s.ctx === 200002, s && s.ctx);
   check('  …sidechain traffic excluded', s.ctx > 900000, false);
   check('  …project name comes from the transcript folder, not the latest cwd', s.project, 'My Project');
-  ok('  …context share is the cache-read fraction of the turn',
-    Math.abs(s.turn.contextShare - (196000 * 0.1) / (196000 * 0.1 + 4000 * 1.25 + 2 + 1000 * 5)) < 1e-9,
-    s.turn.contextShare.toFixed(4));
+  // Averaged over the main-conversation turns, not taken from the newest one:
+  // output weighs five times a cached read, so the same conversation at the
+  // same size reads as 97% after "yes, that's right" and 43% after a long
+  // patch. One turn cannot support a sentence about every turn.
+  const cost = (inp, cw, cr, out) => out * 5 + inp + cw * 1.25 + cr * 0.1;
+  const wantShare = (50000 + 196000) * 0.1
+    / (cost(2, 1000, 50000, 500) + cost(2, 4000, 196000, 1000));
+  ok('  …context share is averaged over the recent turns',
+    Math.abs(s.turn.contextShare - wantShare) < 1e-9,
+    s.turn.contextShare.toFixed(4) + ' (want ' + wantShare.toFixed(4) + ')');
+  check('  …and reports how many turns that was', s.turn.turns, 2);
   ok('  …statusline mentions the big context', scan(home, ['--statusline']).indexOf('ctx 200k') >= 0,
     JSON.stringify(scan(home, ['--statusline'])));
 }
@@ -249,10 +257,27 @@ console.log('\nlimits-scan.js\n');
     Math.abs(spent - one) < 1, Math.round(spent) + ' vs ' + Math.round(one) + ' for one turn');
 }
 
+/* A history file the calibration can learn from: an earlier anchor, the spend
+ * between it and the cached reading, and a record of having been watching the
+ * whole time. `priors` stands in for the earlier pairs a real machine collects
+ * over days — the median needs three before anything is claimed. */
+function seedHistory(home, { from, seen, buckets, anchors, factors, gapAt, v }) {
+  fs.writeFileSync(path.join(home, '.claude', 'claude-pulse', 'limits-history.json'), JSON.stringify({
+    v: v || 3, from, seen, buckets, files: {}, factors: factors || {}, anchors, gapAt,
+  }));
+}
+
+/* One minute's spend, in the per-model shape the ledger keeps. */
+function bucket(units, cls) {
+  const b = { a: units };
+  b[cls || 'opus'] = units;
+  return b;
+}
+
 {
-  // Calibration: two readings of the same window plus the spend between them
-  // teach the scanner what one percent costs. Seeded directly, because it
-  // needs a history that predates the interval.
+  // Calibration: readings of the same window plus the spend between them teach
+  // the scanner what one percent costs. Seeded directly, because it needs a
+  // history that predates the interval.
   const home = newHome();
   const now = Date.now();
   const t0 = now - 60 * MIN, t1 = now - 10 * MIN;
@@ -260,23 +285,276 @@ console.log('\nlimits-scan.js\n');
   writeConfig(home, LIMITS_UTIL(5, 18, resets), t1);
   const buckets = {};
   // 100000 units spent between the two readings, 20000 more since.
-  for (let i = 0; i < 10; i++) buckets[Math.floor((t0 + (i + 1) * 4 * MIN) / MIN)] = 10000;
-  for (let i = 0; i < 2; i++) buckets[Math.floor((t1 + (i + 1) * MIN) / MIN)] = 10000;
-  fs.writeFileSync(path.join(home, '.claude', 'claude-pulse', 'limits-history.json'), JSON.stringify({
-    v: 2, from: t0 - MIN, buckets, files: {}, factors: {},
+  for (let i = 0; i < 10; i++) buckets[Math.floor((t0 + (i + 1) * 4 * MIN) / MIN)] = bucket(10000);
+  for (let i = 0; i < 2; i++) buckets[Math.floor((t1 + (i + 1) * MIN) / MIN)] = bucket(10000);
+  // weekly went 10% -> 18% over 100000 units. Only 88% of this account's week
+  // is Claude Code, which is all this ledger can see, so the step it may claim
+  // is 8 × 0.88 — and one percent of the week therefore costs ~14200 units.
+  const factor = (8 * 0.88) / 100000;
+  seedHistory(home, {
+    from: t0 - MIN, seen: now - MIN, buckets,
+    factors: { weekly: [{ f: factor, tier: 'default_claude_max_20x', t: t0 - 2 * MIN },
+                        { f: factor, tier: 'default_claude_max_20x', t: t0 - MIN }] },
     anchors: [{ t: t0, w: { session: { p: 2, r: resets.session }, weekly: { p: 10, r: resets.weekly } } }],
-  }));
+  });
   const r = scan(home);
   const weekly = r.windows.find((w) => w.key === 'weekly');
-  ok('two readings + the spend between them calibrate the window', weekly.burn.calibrated === true);
-  // weekly went 10% -> 18% over 100000 units, so 1% costs 12500 units.
-  // 20000 units since the reading is a further 1.6%.
+  ok('readings + the spend between them calibrate the window', weekly.burn.calibrated === true);
+  check('  …on three samples, not one', weekly.burn.calibrationSamples, 3);
+  // 20000 units since the reading is a further 1.41%.
   ok('  …and the cached percent is carried forward to now',
-    Math.abs(weekly.burn.live - 19.6) < 0.2, weekly.burn.live && weekly.burn.live.toFixed(2) + '%');
+    Math.abs(weekly.burn.live - (18 + 20000 * factor)) < 0.05,
+    weekly.burn.live && weekly.burn.live.toFixed(2) + '%');
   ok('  …a per-hour rate comes out of it', weekly.burn.perHour > 0, weekly.burn.perHour);
   ok('  …and a projected exhaustion time', weekly.burn.exhaustAt > now, new Date(weekly.burn.exhaustAt).toISOString());
   ok('  …JSON carries no Infinity (it would serialise as null)',
     JSON.stringify(r).indexOf('Infinity') === -1);
+}
+
+{
+  // One pair is not a median. The step is the difference of two whole numbers,
+  // so a reported 2 means anywhere in [1.5, 2.5) — one sample can be 25% out
+  // before the ledger has contributed any error of its own.
+  const home = newHome();
+  const now = Date.now();
+  const t0 = now - 60 * MIN, t1 = now - 10 * MIN;
+  const resets = { session: now + 3600000, weekly: now + 3 * 86400000 };
+  writeConfig(home, LIMITS_UTIL(5, 18, resets), t1);
+  const buckets = {};
+  for (let i = 0; i < 10; i++) buckets[Math.floor((t0 + (i + 1) * 4 * MIN) / MIN)] = bucket(10000);
+  seedHistory(home, {
+    from: t0 - MIN, seen: now - MIN, buckets,
+    anchors: [{ t: t0, w: { weekly: { p: 10, r: resets.weekly } } }],
+  });
+  const weekly = scan(home).windows.find((w) => w.key === 'weekly');
+  check('one pair alone claims nothing', weekly.burn.calibrated, false);
+  check('  …and no live figure with it', weekly.burn.live, null);
+}
+
+{
+  // The server's percentage covers the whole account; this ledger only sees
+  // Claude Code. An afternoon in claude.ai moves the percentage with almost no
+  // local spend to divide by, and the resulting factor was thousands of times
+  // too large — then asserted at 200% with a full-screen banner.
+  const home = newHome();
+  const now = Date.now();
+  const t0 = now - 60 * MIN, t1 = now - 10 * MIN;
+  const resets = { session: now + 3600000, weekly: now + 3 * 86400000 };
+  writeConfig(home, LIMITS_UTIL(5, 18, resets), t1);
+  const buckets = {};
+  // One trivial local turn in the whole interval: 2000 units.
+  buckets[Math.floor((t0 + 5 * MIN) / MIN)] = bucket(2000);
+  for (let i = 0; i < 5; i++) buckets[Math.floor((t1 + (i + 1) * MIN) / MIN)] = bucket(400000);
+  seedHistory(home, {
+    from: t0 - MIN, seen: now - MIN, buckets,
+    anchors: [{ t: t0, w: { weekly: { p: 10, r: resets.weekly } } }],
+  });
+  const weekly = scan(home).windows.find((w) => w.key === 'weekly');
+  check('a step with almost no local spend behind it is not a measurement', weekly.burn.calibrated, false);
+  check('  …so no figure is carried forward from it', weekly.burn.live, null);
+  const hist = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'claude-pulse', 'limits-history.json'), 'utf8'));
+  check('  …and nothing is remembered to poison the median later',
+    (hist.factors.weekly || []).length, 0);
+}
+
+{
+  // Bytes were skipped during the interval, so the ledger holds part of the
+  // spend and dividing by it would learn a factor several times too large.
+  // Being closed is not itself a gap — records carry timestamps, so catching
+  // up fills the minutes in — but skipping bytes is, and it is recorded.
+  const home = newHome();
+  const now = Date.now();
+  const t0 = now - 60 * MIN, t1 = now - 10 * MIN;
+  const resets = { session: now + 3600000, weekly: now + 3 * 86400000 };
+  writeConfig(home, LIMITS_UTIL(5, 18, resets), t1);
+  const buckets = {};
+  for (let i = 0; i < 10; i++) buckets[Math.floor((t0 + (i + 1) * 4 * MIN) / MIN)] = bucket(10000);
+  const factor = (8 * 0.88) / 100000;
+  seedHistory(home, {
+    from: t0 - MIN, seen: now - MIN, buckets,
+    gapAt: t0 + 5 * MIN,                       // bytes skipped inside the interval
+    factors: { weekly: [{ f: factor, t: t0 - 2 * MIN }, { f: factor, t: t0 - MIN }] },
+    anchors: [{ t: t0, w: { weekly: { p: 10, r: resets.weekly } } }],
+  });
+  scan(home);
+  const hist = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'claude-pulse', 'limits-history.json'), 'utf8'));
+  check('an interval with skipped bytes teaches nothing', hist.factors.weekly.length, 2);
+}
+
+{
+  // A factor is percentage-points-per-unit, so it scales with the size of the
+  // plan's budget. Upgrading is exactly what someone who keeps hitting the
+  // limit does, and every sample learned on the old tier is then wrong by the
+  // ratio of the two budgets.
+  const home = newHome();
+  const now = Date.now();
+  const resets = { session: now + 3600000, weekly: now + 3 * 86400000 };
+  writeConfig(home, LIMITS_UTIL(5, 40, resets), now - MIN);
+  seedHistory(home, {
+    from: now - 120 * MIN, seen: now - MIN, buckets: {},
+    factors: { weekly: [
+      { f: 0.001, tier: 'default_claude_pro', t: now - 60 * MIN },
+      { f: 0.001, tier: 'default_claude_pro', t: now - 50 * MIN },
+      { f: 0.001, tier: 'default_claude_pro', t: now - 40 * MIN },
+    ] },
+    anchors: [{ t: now - MIN, w: { weekly: { p: 40, r: resets.weekly } } }],
+  });
+  const weekly = scan(home).windows.find((w) => w.key === 'weekly');
+  check('samples from another plan tier are not used', weekly.burn.calibrated, false);
+}
+
+{
+  // A factor that projects past any possible percentage is wrong, whatever
+  // produced it. The old code clamped to 200 and reported it as calibrated,
+  // which the UI rendered as the most severe warning it has.
+  const home = newHome();
+  const now = Date.now();
+  const t1 = now - 10 * MIN;
+  const resets = { session: now + 3600000, weekly: now + 3 * 86400000 };
+  writeConfig(home, LIMITS_UTIL(5, 40, resets), t1);
+  const buckets = {};
+  for (let i = 0; i < 5; i++) buckets[Math.floor((t1 + (i + 1) * MIN) / MIN)] = bucket(1000000);
+  seedHistory(home, {
+    from: now - 120 * MIN, seen: now - MIN, buckets,
+    factors: { weekly: [
+      { f: 0.001, tier: 'default_claude_max_20x', t: now - 60 * MIN },
+      { f: 0.001, tier: 'default_claude_max_20x', t: now - 50 * MIN },
+      { f: 0.001, tier: 'default_claude_max_20x', t: now - 40 * MIN },
+    ] },
+    anchors: [{ t: t1, w: { weekly: { p: 40, r: resets.weekly } } }],
+  });
+  const weekly = scan(home).windows.find((w) => w.key === 'weekly');
+  check('an impossible projection is withheld rather than shown as 200%', weekly.burn.live, null);
+  check('  …and flagged as what it is', weekly.burn.implausible, true);
+  check('  …and not dressed up as calibrated', weekly.burn.calibrated, false);
+  const hist = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'claude-pulse', 'limits-history.json'), 'utf8'));
+  ok('  …and the factor behind it is thrown away so it can relearn',
+    !hist.factors.weekly, JSON.stringify(hist.factors));
+}
+
+{
+  // A per-model window only moves when that model is used, so dividing its
+  // step by the whole account's spend learns a factor many times too small —
+  // and that window is capped at half the week, so it is the one that blocks
+  // first and the one that would never have warned.
+  const home = newHome();
+  const now = Date.now();
+  const t0 = now - 60 * MIN, t1 = now - 10 * MIN;
+  const resets = { session: now + 3600000, weekly: now + 3 * 86400000 };
+  const util = LIMITS_UTIL(5, 18, resets);
+  util.limits[2].percent = 12;                 // the Fable slice moved too
+  writeConfig(home, util, t1);
+  const buckets = {};
+  // Three parts Sonnet to one part Fable.
+  for (let i = 0; i < 9; i++) buckets[Math.floor((t0 + (i + 1) * 4 * MIN) / MIN)] = bucket(20000, 'sonnet');
+  buckets[Math.floor((t0 + 40 * MIN) / MIN)] = bucket(60000, 'fable');
+  seedHistory(home, {
+    from: t0 - MIN, seen: now - MIN, buckets,
+    anchors: [{ t: t0, w: { weekly_fable: { p: 4, r: resets.weekly } } }],
+  });
+  const hist = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'claude-pulse', 'limits-history.json'), 'utf8'));
+  scan(home);
+  const f = (hist().factors.weekly_fable || [])[0];
+  // 8 points of Fable movement against the 60000 Fable units, not the 240000
+  // the account spent in total. (Weekly windows are scaled by the 88% of the
+  // week this ledger can see.)
+  ok('a per-model window is calibrated against that model\'s own spend',
+    f && Math.abs(f.f - (8 * 0.88) / 60000) < 1e-12, f && f.f);
+}
+
+{
+  // One unreadable transcript used to throw out of readLines, through
+  // updateLedger, and out of the process — in both runtimes. Every consumer
+  // treats no output as a transient blip, so the gauge froze at its last
+  // reading with nothing anywhere to say why.
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, LIMITS_UTIL(62, 41, { session: now + 3600000, weekly: now + 86400000 }), now - MIN);
+  writeSession(home, 'aaaaaaaa-0000-0000-0000-00000000000a', '/Users/x/fine', [
+    assistant(now - MIN, usage(2, 1000, 150000, 500)),
+  ]);
+  const locked = path.join(home, '.claude', 'projects', encode('/Users/x/locked'));
+  fs.mkdirSync(locked, { recursive: true });
+  const lockedFile = path.join(locked, 'bbbbbbbb-0000-0000-0000-00000000000b.jsonl');
+  fs.writeFileSync(lockedFile, JSON.stringify(assistant(now - MIN, usage(2, 10, 10, 10))) + '\n');
+  fs.chmodSync(lockedFile, 0o000);
+  let line = null, threw = null;
+  try { line = scan(home, ['--statusline']); } catch (e) { threw = e; }
+  fs.chmodSync(lockedFile, 0o644);             // so the temp dir can be cleaned
+  ok('a transcript that cannot be opened does not kill the scan', !threw,
+    threw ? String(threw.message).split('\n')[0] : JSON.stringify(line));
+  ok('  …and the figures still come out', line && line.indexOf('wk 41%') >= 0, JSON.stringify(line));
+}
+
+{
+  // A successful turn after a rejection is proof the session recovered. Only
+  // the clock cleared it before, so a rejection with no resetsAt stood for
+  // ever — and a blocked report suppresses every other warning there is.
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, LIMITS_UTIL(50, 20, { session: now + 3600000, weekly: now + 86400000 }), now - MIN);
+  writeSession(home, 'aaaaaaaa-0000-0000-0000-00000000000c', '/Users/x/recovered', [
+    assistant(now - 10 * MIN, usage(2, 100, 1000, 10)),
+    { type: 'assistant', timestamp: new Date(now - 5 * MIN).toISOString(),
+      error: 'rate_limit', apiErrorStatus: 429,
+      quotaLimits: { status: 'rejected', rateLimitType: 'five_hour',
+                     resetsAt: Math.floor((now + 3600000) / 1000), overageStatus: 'rejected' },
+      message: { id: 'msg_rejected', model: 'claude-opus-5-5', usage: usage(0, 0, 0, 0) } },
+    // Switched model, or credits kicked in: it kept working.
+    assistant(now - MIN, usage(2, 500, 120000, 300)),
+  ]);
+  const r = scan(home);
+  check('a rejection the session visibly recovered from is not reported', r.blocked, null);
+  ok('  …and the statusline is not stuck on "limit reached"',
+    scan(home, ['--statusline']).indexOf('limit reached') === -1, JSON.stringify(scan(home, ['--statusline'])));
+}
+
+{
+  // A rejection that never said when it frees up cannot stand indefinitely:
+  // the longest window it could name is the 5-hour one.
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, LIMITS_UTIL(50, 20, { session: now + 3600000, weekly: now + 86400000 }), now - MIN);
+  writeSession(home, 'aaaaaaaa-0000-0000-0000-00000000000d', '/Users/x/openended', [
+    { type: 'assistant', timestamp: new Date(now - 6 * 3600000).toISOString(),
+      quotaLimits: { status: 'rejected', rateLimitType: 'five_hour' },
+      message: { id: 'msg_noreset', model: 'claude-opus-5-5', usage: usage(0, 0, 0, 0) } },
+  ]);
+  check('a rejection with no reset time expires after the longest window it could mean',
+    scan(home).blocked, null);
+}
+
+{
+  // A reading can be far too old to describe a window that has NOT rolled
+  // over. Claude Code refreshes this cache on a sampled schedule — the flag
+  // was at 1% on the machine this was written on — so a 35-hour-old weekly
+  // reading is ordinary, and showing its percentage as the current figure put
+  // a number from two days earlier in a banner.
+  const home = newHome();
+  const now = Date.now();
+  const fetched = now - 35 * 3600000;
+  writeConfig(home, LIMITS_UTIL(1, 8, {
+    session: fetched + 4 * 3600000,          // rolled over since
+    weekly: now + 1.5 * 86400000,            // still the same week
+  }), fetched);
+  const r = scan(home);
+  const week = r.windows.find((w) => w.key === 'weekly');
+  check('a 35-hour-old weekly reading is not the current figure', week.burn.trusted, false);
+  check('  …and is marked as out of date rather than rolled over', week.burn.outdated, true);
+  check('  …no number is shown for it', week.burn.live, null);
+  check('  …and the status line says what to do instead',
+    scan(home, ['--statusline']), 'usage unknown — run /usage');
+}
+
+{
+  // The same reading inside the window's useful life is fine.
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, LIMITS_UTIL(30, 40, { session: now + 3600000, weekly: now + 5 * 86400000 }), now - 5 * MIN);
+  const r = scan(home);
+  check('a reading minutes old is still the current figure',
+    r.windows.filter((w) => w.burn.trusted).map((w) => w.key), ['session', 'weekly', 'weekly_fable']);
+  check('  …and the status line shows it', scan(home, ['--statusline']), '5h 30% · wk 40%');
 }
 
 {

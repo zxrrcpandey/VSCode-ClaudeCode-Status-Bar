@@ -30,8 +30,13 @@ struct LimitWindow {
     var headroomHours: Double? = nil // hours of slack: negative = you run dry first
     var beatsReset = false       // true = you run out before the window resets
     var calibrated = false       // false = no live estimate yet, only the cached percent
+    /// How many pairs of readings the estimate rests on.
+    var calibrationSamples = 0
     /// The cached reading was for a window that has since rolled over.
     var expired = false
+    /// The reading is too old to describe this window any more, even though
+    /// the window itself has not rolled over.
+    var outdated = false
     /// False means there is no number here worth showing: the reading aged out
     /// and nothing local can stand in for it yet.
     var trusted = true
@@ -41,6 +46,26 @@ struct LimitWindow {
     /// What to put in front of the user: the dead-reckoned figure once there
     /// is one, otherwise the cached reading.
     var shown: Int { Int((live ?? Double(percent)).rounded()) }
+
+    /// Whether `shown` was carried forward locally rather than read from the
+    /// server's own answer. Worth marking: `/usage` will say something a few
+    /// points different, and a figure presented as fact that turns out to be a
+    /// guess costs more trust than a figure that said so.
+    var projected: Bool { live != nil }
+
+    /// The percentage as it should be written — "78%", or "~78%" when carried
+    /// forward.
+    var shownText: String { (projected ? "~" : "") + "\(shown)%" }
+
+    /// A per-model window's percentage is of that model's slice of the week,
+    /// not of the week, so it reads roughly twice as high for the same spend.
+    /// Anywhere the number appears alone it has to say which it is.
+    var tag: String {
+        if key == "session" { return "5h" }
+        if key == "weekly" { return "wk" }
+        if let m = model, !m.isEmpty { return String(m.prefix(4)).lowercased() }
+        return key
+    }
 }
 
 struct BlockedInfo {
@@ -60,11 +85,18 @@ struct SessionContext {
     /// warns that Max "can consume 3.5× or more usage than Medium".
     var effort: String?
     var turnCost: Double         // in relative units, for the share below
-    var contextShare: Double     // 0-1: how much of a turn is re-reading
+    var contextShare: Double     // 0-1: how much of a reply is re-reading
+    /// How many replies the share was averaged over. One reply is not a basis
+    /// for a sentence about every reply, so the wording depends on this.
+    var turns: Int = 0
     var compactedAt: Double
     var compactTrigger: String?
     var preTokens: Int?
     var updatedAt: Double
+
+    /// Rounded once, here, so the banner and the menu cannot disagree about
+    /// the same measurement by a point.
+    var contextSharePct: Int { Int((contextShare * 100).rounded()) }
 }
 
 struct LimitReport {
@@ -90,6 +122,13 @@ struct LimitReport {
 
 final class LimitReader {
     private(set) var report = LimitReport()
+    /// Why the last scan produced nothing, and how many have failed in a row.
+    /// A single failure is a blip — a half-written config, a transcript deleted
+    /// mid-read. A run of them means the gauge has quietly stopped moving,
+    /// which is worse than an error, because nothing on screen looks wrong.
+    private(set) var lastError: String?
+    private(set) var failures = 0
+    var failing: Bool { failures >= 3 }
     private var busy = false
     private let script: String?
     private let runner: String?
@@ -109,20 +148,30 @@ final class LimitReader {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: runner)
             p.arguments = ["run", script]
-            let pipe = Pipe()
+            let pipe = Pipe(), errPipe = Pipe()
             p.standardOutput = pipe
-            p.standardError = FileHandle.nullDevice
-            var out = Data()
+            p.standardError = errPipe
+            var out = Data(), err = Data()
+            var launched = false
             do {
                 try p.run()
+                launched = true
                 out = pipe.fileHandleForReading.readDataToEndOfFile()
+                err = errPipe.fileHandleForReading.readDataToEndOfFile()
                 p.waitUntilExit()
             } catch { }
             let parsed = Self.parse(out)
+            let why = !launched ? "could not start the scanner"
+                : p.terminationStatus != 0
+                    ? (String(data: err, encoding: .utf8)?
+                        .split(separator: "\n").first.map(String.init) ?? "scanner exited \(p.terminationStatus)")
+                    : parsed == nil ? "scanner produced nothing to read" : nil
             DispatchQueue.main.async {
                 // A failed run (or a half-written config) must not wipe a good
                 // reading: keep the last one until a scan actually succeeds.
                 if let parsed { self?.report = parsed }
+                self?.lastError = why
+                if why == nil { self?.failures = 0 } else { self?.failures += 1 }
                 self?.busy = false
                 done()
             }
@@ -155,7 +204,9 @@ final class LimitReader {
                 headroomHours: burn?["headroomHours"] as? Double,
                 beatsReset: (burn?["beatsReset"] as? Bool) ?? false,
                 calibrated: (burn?["calibrated"] as? Bool) ?? false,
+                calibrationSamples: Int((burn?["calibrationSamples"] as? Double) ?? 0),
                 expired: (burn?["expired"] as? Bool) ?? false,
+                outdated: (burn?["outdated"] as? Bool) ?? false,
                 trusted: (burn?["trusted"] as? Bool) ?? true))
         }
 
@@ -185,6 +236,7 @@ final class LimitReader {
                 effort: v["effort"] as? String,
                 turnCost: (turn?["cost"] as? Double) ?? 0,
                 contextShare: (turn?["contextShare"] as? Double) ?? 0,
+                turns: Int((turn?["turns"] as? Double) ?? 0),
                 compactedAt: (v["compactedAt"] as? Double) ?? 0,
                 compactTrigger: v["compactTrigger"] as? String,
                 preTokens: (v["preTokens"] as? Double).map { Int($0) },
@@ -280,9 +332,16 @@ struct LimitPolicy {
         var best: (LimitTier, LimitWindow?) = (.ok, nil)
         for w in r.windows {
             let t = tier(w)
+            guard t >= best.0, t > .ok else { continue }
+            if t > best.0 { best = (t, w); continue }
             // Ties go to the window closest to running out, so the warning
-            // names the one that will actually bite.
-            if t > best.0 || (t == best.0 && t > .ok && w.shown > (best.1?.shown ?? -1)) { best = (t, w) }
+            // names the one that will actually bite. Each window's percentage
+            // is of its own limit, so they do compare — but on a dead heat
+            // prefer the whole-week one, which needs less explaining.
+            guard let cur = best.1 else { best = (t, w); continue }
+            if w.shown > cur.shown || (w.shown == cur.shown && w.model == nil && cur.model != nil) {
+                best = (t, w)
+            }
         }
         return best
     }
@@ -335,8 +394,12 @@ enum LimitFmt {
         return String(n)
     }
 
-    /// The short form for the menu bar: "wk 82%".
+    /// The short form for the menu bar: "wk ~82%".
+    ///
+    /// Always labelled. An unlabelled "80%" reads as the week, and for a
+    /// per-model window that is the one reading it cannot be: those are
+    /// percentages of a slice of the week, so 80% there can be 40% of the week.
     static func short(_ w: LimitWindow) -> String {
-        (w.key == "session" ? "5h " : w.key == "weekly" ? "wk " : "") + "\(w.shown)%"
+        w.tag + " " + w.shownText
     }
 }

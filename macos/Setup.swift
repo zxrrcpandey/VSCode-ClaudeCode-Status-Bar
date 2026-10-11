@@ -60,9 +60,40 @@ enum PulseSetup {
 
     static var installedLimitsScript: URL { pulseDir.appendingPathComponent("limits-scan.js") }
 
+    /// Reads the actual setting rather than searching the file for a path.
+    ///
+    /// settings.json also holds `permissions.allow`, which on this machine is
+    /// 368 KB of approved commands. One approval mentioning this script — easy
+    /// to collect while testing the feature — made a substring search answer
+    /// "installed" for ever: the menu offered only "Remove", removing found
+    /// nothing to remove and reported success, and the feature could never be
+    /// turned on again.
     static func statusLineInstalled() -> Bool {
-        guard let s = try? String(contentsOf: settingsFile, encoding: .utf8) else { return false }
-        return s.contains("claude-pulse/limits-scan.js")
+        guard let data = try? Data(contentsOf: settingsFile),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let line = obj["statusLine"] as? [String: Any],
+              let cmd = line["command"] as? String
+        else { return false }
+        return cmd.contains("claude-pulse/limits-scan.js")
+            || (cmd.contains("claude-pulse") && cmd.contains("--statusline"))
+    }
+
+    /// Keep the status line's own copy of the scanner current.
+    ///
+    /// It runs a copy pinned at install time, which nothing refreshed — so
+    /// after an upgrade two different builds of the same script read and write
+    /// one limits-history.json, several times a second, with the older one
+    /// quietly misreading whatever the newer one added. The extension keeps
+    /// hook.js in step for the same reason; this is the other half.
+    static func ensureLimitsScript() {
+        guard statusLineInstalled() else { return }
+        let src = resources.appendingPathComponent("limits-scan.js")
+        guard let want = try? String(contentsOf: src, encoding: .utf8) else { return }
+        if let have = try? String(contentsOf: installedLimitsScript, encoding: .utf8), have == want { return }
+        let tmp = pulseDir.appendingPathComponent("limits-scan.js.tmp-\(getpid())")
+        try? FileManager.default.createDirectory(at: pulseDir, withIntermediateDirectories: true)
+        guard (try? want.write(to: tmp, atomically: false, encoding: .utf8)) != nil else { return }
+        if rename(tmp.path, installedLimitsScript.path) != 0 { try? FileManager.default.removeItem(at: tmp) }
     }
 
     /// Usage under the Claude Code prompt. Costs nothing: the status line is
@@ -82,8 +113,17 @@ enum PulseSetup {
 
     /// The uninstaller deletes ~/.claude/claude-pulse — including the copied
     /// runner — so it runs from the copy inside the app bundle.
+    ///
+    /// The status line lives in that directory too, and Claude Code would go on
+    /// invoking the deleted binary on every prompt render, so it goes first.
+    /// Starting at login is removed as well: a LaunchAgent in the user's own
+    /// home folder would otherwise outlive the app and have launchd chasing a
+    /// deleted executable at every login, with nothing left to explain it.
     static func removeHooks() -> (ok: Bool, output: String) {
-        run(bundledRunner, ["run", resources.appendingPathComponent("uninstall-hooks.js").path], env: [:])
+        if statusLineInstalled() { _ = removeStatusLine() }
+        LoginItem.set(false)
+        UserDefaults.standard.set(false, forKey: "openAtLoginChosen")
+        return run(bundledRunner, ["run", resources.appendingPathComponent("uninstall-hooks.js").path], env: [:])
     }
 
     static var bundledVSIX: URL? {

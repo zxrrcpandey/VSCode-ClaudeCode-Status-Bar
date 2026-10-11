@@ -165,6 +165,11 @@
           "default": 300000,
           "minimum": 20000,
           "description": "Flag a conversation once it carries this many tokens. Everything in a conversation is re-read on every reply, so a large one makes each turn cost far more; /compact keeps a summary and drops the rest."
+        },
+        "claudePulse.buddyUsageRemarks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let the desktop character mention a usage limit out loud. Turn it off to keep the quiet status bar badge without the commentary."
         }
       }
     }

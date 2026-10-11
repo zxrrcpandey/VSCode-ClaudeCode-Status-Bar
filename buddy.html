@@ -804,7 +804,11 @@
     // mention a limit before anything louder has to.
     const u = data.usage;
     if (gotFirst && u && u.kind) {
-      const step = u.kind + ':' + (u.tier || 0) + ':' + (u.pct || 0);
+      // Keyed on the tier alone. With the percentage in the key, the live
+      // estimate ticking up a point — every few minutes while you work —
+      // counted as something new to say, so the character re-delivered the
+      // same warning with a particle burst for the rest of the week.
+      const step = u.kind + ':' + (u.tier || 0);
       if (step !== lastUsageStep) {
         lastUsageStep = step;
         say(usageLine(u), 9000);
@@ -829,6 +833,12 @@
     if (u.kind === 'session') {
       return NAME + ', the 5-hour window is <b>' + (u.pct | 0) + '%</b> used. It refills in ' + until
         + ' — good moment for a tea.';
+    }
+    // A per-model window is a slice of the week, so it says which slice
+    // rather than claiming the whole week is that far gone.
+    if (u.what) {
+      return NAME + ', your <b>' + esc(u.what) + '</b> is <b>' + (u.pct | 0) + '%</b> used, refilling in '
+        + until + '. Your week overall has more left than that.';
     }
     return NAME + ', your week is <b>' + (u.pct | 0) + '%</b> used and refills in ' + until + '. Pace yourself!';
   }

@@ -354,8 +354,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit(message == nil ? 0 : 1)
         }
         // Started twice (a LaunchAgent plus a click in Finder) would mean two
-        // icons in the menu bar, both polling. The newer copy stands down.
-        if LoginItem.anotherOlderInstanceIsRunning() { exit(0) }
+        // icons in the menu bar, both polling. Whichever copy gets the lock
+        // keeps it; the other stands down.
+        if !LoginItem.claimSingleInstance() { exit(0) }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -847,8 +848,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .off:
             login.state = .off
         case .unavailable(let why):
+            // A dead row, built the way the other dead rows in this menu are:
+            // AppKit's autoenablesItems would undo `isEnabled = false` for an
+            // item that still has a target and an action, so the row would
+            // look normal, be clickable, and do nothing but repeat a dialog.
             login.state = .off
-            login.isEnabled = false
+            login.action = nil
+            login.target = nil
+            login.title = "Open at Login — move to Applications first"
             login.toolTip = why
         }
         menu.addItem(login)
@@ -935,13 +942,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleLogin(_ sender: NSMenuItem) {
+        // The row for this state says "needs your OK in System Settings", so
+        // clicking it has to go there. It counts as on, so the plain toggle
+        // would read the click as "turn it off" and silently unregister the
+        // item the user was trying to approve.
+        if case .needsApproval = LoginItem.state() {
+            LoginItem.openSystemSettings()
+            return
+        }
         let turningOn = !LoginItem.isOn
+        let message = LoginItem.set(turningOn)
         // Remember the choice, so an upgrade does not quietly re-enable
-        // something the user switched off.
-        UserDefaults.standard.set(turningOn, forKey: "openAtLoginChosen")
-        guard let message = LoginItem.set(turningOn) else { return }
+        // something the user switched off — but only once it took, or a failed
+        // attempt would leave the self-heal trying to restore it for ever.
+        if message == nil || !turningOn || LoginItem.isOn {
+            UserDefaults.standard.set(turningOn, forKey: "openAtLoginChosen")
+        }
+        guard let message else { return }
         let a = NSAlert()
-        a.messageText = turningOn ? "Almost — one more step" : "Couldn't change the login item"
+        a.messageText = LoginItem.isOn == turningOn ? "Almost — one more step" : "Couldn't change the login item"
         a.informativeText = message
         a.alertStyle = .informational
         if case .needsApproval = LoginItem.state() {

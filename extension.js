@@ -36,11 +36,11 @@ function buddyName() {
 // The extension reads fields the hook writes, so the two must not drift. If
 // hooks are installed and the deployed script differs from the bundled one,
 // refresh it in place (settings.json already points at this path).
-function syncInstalledHook() {
+function syncInstalled(destParts, srcParts) {
   try {
-    const dest = path.join(os.homedir(), '.claude', 'claude-pulse', 'hook.js');
-    if (!fs.existsSync(dest)) return;   // hooks not installed — nothing to sync
-    const src = path.join(__dirname, 'hooks', 'hook.js');
+    const dest = path.join(os.homedir(), '.claude', 'claude-pulse', ...destParts);
+    if (!fs.existsSync(dest)) return;   // not installed — nothing to sync
+    const src = path.join(__dirname, ...srcParts);
     if (!fs.existsSync(src)) return;
     const want = fs.readFileSync(src, 'utf8');
     if (fs.readFileSync(dest, 'utf8') === want) return;
@@ -48,6 +48,15 @@ function syncInstalledHook() {
     fs.writeFileSync(tmp, want);
     fs.renameSync(tmp, dest);
   } catch { /* best effort — never block activation */ }
+}
+
+function syncInstalledHook() {
+  syncInstalled(['hook.js'], ['hooks', 'hook.js']);
+  // The status line runs its own copy of limits-scan.js, pinned when it was
+  // installed and never refreshed — so after an upgrade two different builds
+  // of the same script read and write one limits-history.json, several times a
+  // second. Keep it current for the same reason hook.js is kept current.
+  syncInstalled(['limits-scan.js'], ['limits-scan.js']);
 }
 
 function detectGitName() {
@@ -128,11 +137,14 @@ function buddyUsage() {
     return { kind: 'blocked', tier: 3, until: b.resetsAt ? untilText(b.resetsAt) : '' };
   }
   const worst = limitWorst();
-  if (worst && worst.tier >= 2 && worst.w) {
+  if (cfg.remarks && worst && worst.tier >= 2 && worst.w) {
     return {
       kind: worst.w.key === 'session' ? 'session' : 'weekly',
       tier: worst.tier,
       pct: windowShown(worst.w),
+      // What the percentage is of. Without it the character would announce a
+      // model's half-week allowance as though it were the whole week.
+      what: worst.w.model ? 'weekly ' + worst.w.model + ' limit' : null,
       until: worst.w.resetsAt ? untilText(worst.w.resetsAt) : '',
     };
   }
@@ -140,7 +152,7 @@ function buddyUsage() {
     .map((k) => limitsData.sessions[k])
     .filter((x) => x.ctx >= cfg.contextWarn && x.turn && x.turn.contextShare >= 0.55)
     .sort((a, b) => b.ctx - a.ctx)[0];
-  if (big) return { kind: 'compact', tier: 2, ctx: fmtTok(big.ctx) };
+  if (cfg.remarks && big) return { kind: 'compact', tier: 2, ctx: fmtTok(big.ctx) };
   // No kind, so the character says nothing — it only colours an idle remark.
   const weekly = (limitsData.windows || []).find((w) => w.key === 'weekly');
   return weekly && !(weekly.burn && weekly.burn.trusted === false)
@@ -188,6 +200,29 @@ function refreshLimits() {
   });
 }
 
+/* What to register as Claude Code's status line command.
+ *
+ * Claude Code runs it through a shell, so it has to resolve without this
+ * extension's help. The macOS app's native runner is the first choice; failing
+ * that, Electron can run as Node, which is exactly how this extension runs the
+ * same script — so it is known to work here, which a bare `node` is not. */
+function statusLineCommand() {
+  const dir = path.join(os.homedir(), '.claude', 'claude-pulse');
+  const dest = path.join(dir, 'limits-scan.js');
+  const runner = path.join(dir, 'pulse-hook');
+  if (fs.existsSync(runner)) return '"' + runner + '" run "' + dest + '" --statusline';
+  return 'ELECTRON_RUN_AS_NODE=1 "' + process.execPath + '" "' + dest + '" --statusline';
+}
+
+/* The useful line of a failed script, rather than the last one — which for an
+ * unhandled exception is the Node version banner. */
+function firstError(stderr, err) {
+  const lines = String(stderr || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  return lines.find((l) => l.indexOf('ERROR:') === 0)
+    || lines[0]
+    || String((err && err.message) || 'the installer failed').trim();
+}
+
 // The same thresholds the macOS app uses, so both halves of Claude Pulse
 // agree about when a number is worth worrying about.
 function limitSettings() {
@@ -200,6 +235,10 @@ function limitSettings() {
   const sessionWarn = n('limitWarnSession', 88, 1, 100);
   return {
     show: cfg.get('showLimits') !== false,
+    // Separate from `show`, so quietening the character does not also take
+    // away the status bar badge — the quiet indicator should not be the price
+    // of switching off the chatty one.
+    remarks: cfg.get('buddyUsageRemarks') !== false,
     contextWarn: n('contextWarnTokens', 300000, 20000, Number.MAX_SAFE_INTEGER),
     weekly: { watch: Math.max(1, weeklyWarn - 25), warn: weeklyWarn, critical: Math.min(100, weeklyWarn + 15) },
     session: { watch: Math.max(1, sessionWarn - 18), warn: sessionWarn, critical: Math.min(100, sessionWarn + 8) },
@@ -209,6 +248,23 @@ function limitSettings() {
 function windowShown(w) {
   const live = w.burn && typeof w.burn.live === 'number' ? w.burn.live : w.percent;
   return Math.round(live);
+}
+
+/* "~" when the figure was carried forward from the last cached reading rather
+ * than read from it, so `/usage` saying something else is not a contradiction. */
+function windowShownText(w) {
+  const projected = !!(w.burn && typeof w.burn.live === 'number');
+  return (projected ? '~' : '') + windowShown(w) + '%';
+}
+
+/* A short label that is never just a number. A per-model window's percentage
+ * is of that model's slice of the week, so a bare "80%" reads as the week when
+ * it can mean 40% of it. */
+function windowTag(w) {
+  if (w.key === 'session') return '5h';
+  if (w.key === 'weekly') return 'wk';
+  if (w.model) return String(w.model).slice(0, 4).toLowerCase();
+  return w.key;
 }
 
 /* Mirrors LimitPolicy.tier() in macos/Limits.swift: a high percentage only
@@ -471,12 +527,21 @@ function limitTooltip(tip) {
   for (const w of limitsData.windows || []) {
     let line;
     if (w.burn && w.burn.trusted === false) {
-      line = '- **' + w.label + '** — _waiting for a fresh reading_' +
+      // Claude Code refreshes its own usage cache on a sampled schedule and
+      // can be a day or more behind, so name the command that fixes it rather
+      // than repeat a figure that no longer describes the window.
+      line = '- **' + w.label + '** — ' +
+        (w.burn.outdated && limitsData.ageMs
+          ? '_last checked ' + agoText(limitsData.ageMs) + ' ago — run_ `/usage` _in Claude Code_'
+          : '_waiting for a fresh reading_') +
         (w.resetsAt ? ' · refills in ' + untilText(w.resetsAt) : '');
     } else {
       line = '- **' + w.label + '** — ' + windowShown(w) + '%';
       if (w.sharePercent) line += ' of its ' + Math.round(w.sharePercent) + '% share';
-      if (!(w.burn && w.burn.calibrated)) line += ' _(last checked)_';
+      // Which of the two numbers this is, and what it was projected from.
+      line += (w.burn && w.burn.calibrated)
+        ? ' _(estimated from ' + w.percent + '% at the last check)_'
+        : ' _(last checked)_';
       if (w.resetsAt) line += ' · refills in ' + untilText(w.resetsAt);
     }
     tip.appendMarkdown(line + '\n');
@@ -491,8 +556,12 @@ function limitTooltip(tip) {
     .filter((s) => s.ctx >= Math.min(120000, cfg.contextWarn))
     .sort((a, b) => b.ctx - a.ctx)[0];
   if (big) {
+    const share = Math.round((big.turn ? big.turn.contextShare : 0) * 100);
+    const turns = big.turn ? big.turn.turns || 0 : 0;
     tip.appendMarkdown('\n**' + big.project + '** carries ' + fmtTok(big.ctx) + ' of context — ' +
-      Math.round((big.turn ? big.turn.contextShare : 0) * 100) + '% of every reply is re-reading it.' +
+      (turns >= 3
+        ? share + '% of the cost of its last ' + turns + ' replies was re-reading it.'
+        : share + '% of its latest reply was re-reading it.') +
       (big.ctx >= cfg.contextWarn ? ' `/compact` makes the next ones much cheaper.' : '') + '\n');
   }
   if (limitsData.stale && limitsData.ageMs) {
@@ -516,8 +585,8 @@ function render() {
     if (worst.blocked) {
       badge = ' · $(error) ' + (worst.blocked.resetsAt ? untilText(worst.blocked.resetsAt) : 'limit');
     } else {
-      const tag = worst.w.key === 'session' ? '5h' : worst.w.key === 'weekly' ? 'wk' : worst.w.label;
-      badge = ' · ' + (worst.tier >= 2 ? '$(warning) ' : '') + tag + ' ' + windowShown(worst.w) + '%';
+      badge = ' · ' + (worst.tier >= 2 ? '$(warning) ' : '')
+        + windowTag(worst.w) + ' ' + windowShownText(worst.w);
     }
   }
 
@@ -818,23 +887,41 @@ function activate(context) {
           const b = w.burn || {};
           let d = w.resetsAt ? 'refills in ' + untilText(w.resetsAt) : '';
           if (b.trusted === false) {
-            items.push({ label: w.label + ' — waiting for a fresh reading', description: d });
+            items.push({
+              label: w.label + ' — ' + (b.outdated && limitsData.ageMs
+                ? 'last checked ' + agoText(limitsData.ageMs) + ' ago'
+                : 'waiting for a fresh reading'),
+              description: (b.outdated ? 'run /usage in Claude Code to refresh · ' : '') + d,
+            });
             continue;
           }
           if (!b.calibrated) d += d ? ' · last checked' : 'last checked';
-          else if (b.perHour > 0.05) d += ' · ' + b.perHour.toFixed(1) + '%/h' + (b.beatsReset ? ' ⚠ runs out first' : '');
-          items.push({ label: w.label + ' — ' + windowShown(w) + '%', description: d });
+          else {
+            d += (d ? ' · ' : '') + 'estimated from ' + w.percent + '%';
+            if (b.perHour > 0.05) d += ' · ' + b.perHour.toFixed(1) + '%/h' + (b.beatsReset ? ' ⚠ runs out first' : '');
+          }
+          items.push({ label: w.label + ' — ' + windowShownText(w), description: d });
+        }
+        if ((limitsData.breakdown || []).some((r) => r.percent > 0)) {
+          // These are shares of the week's usage, summing to 100 — not shares
+          // of the limit. Next to a "weekly limit — 8%" row above, "88% of the
+          // week" states the opposite of the truth.
+          items.push(sep('Where this week\'s usage went'));
         }
         for (const row of limitsData.breakdown || []) {
-          if (row.percent > 0) items.push({ label: '    ' + row.label, description: row.percent + '% of the week' });
+          if (row.percent > 0) {
+            items.push({ label: '    ' + row.label, description: row.percent + "% of this week's usage" });
+          }
         }
         const sessionsByCtx = Object.keys(limitsData.sessions || {})
           .map((k) => limitsData.sessions[k]).filter((s) => s.ctx > 0).sort((a, b) => b.ctx - a.ctx);
         if (sessionsByCtx.length) items.push(sep('Conversation size (what each reply re-reads)'));
         for (const s of sessionsByCtx.slice(0, 5)) {
+          const turns = s.turn ? s.turn.turns || 0 : 0;
+          const share = Math.round((s.turn ? s.turn.contextShare : 0) * 100);
           items.push({
             label: s.project + ' — ' + fmtTok(s.ctx) + ' context',
-            description: Math.round((s.turn ? s.turn.contextShare : 0) * 100) + '% of each reply' +
+            description: (s.turn ? share + '% of ' + (turns >= 3 ? 'its last ' + turns + ' replies' : 'its latest reply') : 'just compacted') +
               (s.ctx >= limitSettings().contextWarn ? ' · worth running /compact' : ''),
           });
         }
@@ -854,8 +941,16 @@ function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand('claudePulse.statusLine', async () => {
       const settings = path.join(os.homedir(), '.claude', 'settings.json');
+      // The actual setting, not a search of the file: settings.json also holds
+      // permissions.allow, and one approved command mentioning this path would
+      // otherwise wedge the toggle at "Remove" for good.
       let installed = false;
-      try { installed = fs.readFileSync(settings, 'utf8').includes('claude-pulse/limits-scan.js'); } catch { /* none yet */ }
+      try {
+        const cmd = (JSON.parse(fs.readFileSync(settings, 'utf8')).statusLine || {}).command;
+        installed = typeof cmd === 'string'
+          && (cmd.includes('claude-pulse/limits-scan.js')
+            || (cmd.includes('claude-pulse') && cmd.includes('--statusline')));
+      } catch { /* no settings yet, or not ours */ }
       const verb = installed ? 'Remove' : 'Add';
       const ok = await vscode.window.showInformationMessage(
         installed
@@ -865,10 +960,20 @@ function activate(context) {
       if (ok !== verb) return;
       cp.execFile(process.execPath,
         [path.join(__dirname, 'scripts', 'install-statusline.js')].concat(installed ? ['--remove'] : []),
-        { env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }), timeout: 20000 },
+        {
+          env: Object.assign({}, process.env, {
+            ELECTRON_RUN_AS_NODE: '1',
+            // Claude Code runs the status line through a shell, so a bare
+            // `node` would have to be on PATH — and this extension launches
+            // its own scripts through Electron precisely because it cannot
+            // assume that. Hand the installer something that always resolves.
+            PULSE_STATUSLINE_COMMAND: statusLineCommand(),
+          }),
+          timeout: 20000,
+        },
         (err, stdout, stderr) => {
           if (err) {
-            vscode.window.showErrorMessage('Claude Pulse: ' + String(stderr || err.message).trim().split('\n').pop());
+            vscode.window.showErrorMessage('Claude Pulse: ' + firstError(stderr, err));
             return;
           }
           vscode.window.showInformationMessage(installed

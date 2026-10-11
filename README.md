@@ -123,16 +123,35 @@ Claude Code asks the server how much of your plan is left and caches the answer 
 and still makes no API calls — so it can show the real percentages: the 5-hour window, the
 week, and any per-model window, each with the time it refills.
 
-That cache is not a live meter: it has been seen unchanged for 45 minutes during heavy use.
-So Pulse keeps a small local ledger of what the transcripts say you have spent, per minute,
-and pairs two cached readings with the tokens spent between them to learn what one percent
-costs. From then on it carries the cached figure forward to now and can say *"about 4% an
-hour, so it runs out around 6:20 pm — and it does not refill until 9 pm."* Until it has
-learnt that, it shows the cached number and labels it *last checked* rather than guessing.
+**That cache is not a live meter, and this is the single most important thing to know about
+it.** Claude Code decides when to refresh it on a sampled schedule — the feature flag
+`tengu_agile_glade.policy_limits_poll` was `0.01` on the machine this was built on — so
+readings **35 hours old** are ordinary, not exceptional. A reading that old can be flatly
+wrong: one said the week was 8% used, and `claude.ai/settings/usage` disagreed with its own
+breakdown at the same moment.
 
-Learning it takes a couple of those server refreshes — a few hours of normal use — because a
-pair is only used when the local ledger covers the whole interval between the two readings.
-Nothing is shown as a live figure before then.
+So Pulse does not show a figure it cannot stand behind:
+
+- If the window has **rolled over** since the reading, the percentage describes a window that
+  no longer exists. Pulse rolls the window forward to the current one and withholds it.
+- If the reading is simply **too old** — more than a tenth of the window's own length, so 30
+  minutes for the 5-hour window and about 17 hours for the week — it is history, not status.
+  Pulse says *"last checked 35h ago — run `/usage` in Claude Code to refresh"* instead of
+  printing the number. Running `/usage` is what fetches a fresh one.
+- Otherwise it shows the number, and says which kind of number it is.
+
+To stretch a good reading further, Pulse keeps a small local ledger of what the transcripts
+say you have spent, per minute, and pairs two cached readings with the tokens spent between
+them to learn what one percent costs. From then on it carries the figure forward and can say
+*"about 4.2% an hour, so it runs out around 6:20 pm — and it does not refill until 9 pm."*
+A carried-forward figure is always marked with a `~` and names the reading it came from.
+
+It is deliberately slow to claim that. A pair is only used when the ledger covers every byte
+written during the interval, when there was enough local spend to account for the step, and
+when the step came from the same plan tier; a per-model window is measured against that
+model's own spend. Three such pairs are needed before any of it is shown, because a median of
+one is not a median. Until then you get the cached number labelled *last checked*, or nothing
+at all — never a guess wearing the clothes of a measurement.
 
 - **The menu bar / status bar** carries a small badge once a window is worth watching
   (`wk 62%`), amber then red as it gets worse. It stays visible when no session is running —
@@ -154,9 +173,9 @@ Nothing is shown as a live figure before then.
 ### Why a long conversation is the expensive part
 
 Everything in a conversation is re-read on every single turn. Measured on one real machine
-over two days: 1.18 **billion** cache-read tokens against 5.4 million output tokens — about
-88% of the spend was carrying context, not producing work, with sessions riding to ~970k
-tokens before auto-compact caught them.
+over seven days: 1.70 **billion** cache-read tokens against 7.3 million of output — 88% of
+the spend was carrying context, not producing work. The median turn re-read 374k tokens, and
+sessions rode to ~977k before auto-compact caught them.
 
 So Pulse measures each live session's context from the transcript, works out how much of a
 turn goes on re-reading it, and says so once it passes `contextWarnTokens` (300k by default)
@@ -226,7 +245,14 @@ node scripts/uninstall-hooks.js
 rm -rf ~/.vscode/extensions/warroom.claude-pulse-0.1.0
 ```
 
-Backups of `settings.json` are left next to it as `settings.json.claude-pulse-backup-*`.
+That removes the hooks, the Claude Code status line if you added one, `~/.claude/claude-pulse/`
+and the start-at-login agent. The macOS app's *Remove Claude Code Hooks…* does the same and
+also clears its login item, so dragging `ClaudePulse.app` to the Trash afterwards leaves
+nothing behind. If you only ever used the app and deleted it without that step, the one file
+worth removing by hand is `~/Library/LaunchAgents/com.warroom.claude-pulse.plist`.
+
+Backups of `settings.json` are left next to it as `settings.json.claude-pulse-backup-*`
+(the newest five are kept; older ones are pruned).
 
 ## Troubleshooting
 
@@ -303,6 +329,9 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
   the indicator amber (defaults 75 and 88)
 - `claudePulse.contextWarnTokens` — flag a conversation once it carries this much context
   (default 300000)
+- `claudePulse.buddyUsageRemarks` — let the desktop character mention a limit out loud
+  (default on). Separate from `showLimits`, so you can keep the quiet badge without the
+  commentary.
 
 The macOS app reads the same things from its own domain, so `defaults write` tunes it
 without a restart:

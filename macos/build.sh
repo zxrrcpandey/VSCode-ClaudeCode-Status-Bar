@@ -53,8 +53,18 @@ cp ../usage-scan.js ../limits-scan.js ../buddy.html ../hooks/hook.js \
    ../scripts/install-hooks.js ../scripts/uninstall-hooks.js ../scripts/install-statusline.js "$R/"
 # The VS Code extension rides along, so one download sets up both.
 VSIX="../claude-pulse-$VERSION.vsix"
-if [ ! -f "$VSIX" ] && command -v node >/dev/null 2>&1; then (cd .. && node scripts/build-vsix.js >/dev/null); fi
-if [ -f "$VSIX" ]; then cp "$VSIX" "$R/"; else echo "note: $VSIX not found — VS Code extension not bundled"; fi
+# Always rebuild when node is available. Building only when the file is absent
+# shipped a new app next to the previous extension — silently, with no warning
+# — and the two halves share limits-scan.js and the status line command, so
+# they have to come from the same source. It takes well under a second.
+if command -v node >/dev/null 2>&1; then (cd .. && node scripts/build-vsix.js >/dev/null); fi
+if [ -f "$VSIX" ]; then
+  cp "$VSIX" "$R/"
+elif command -v node >/dev/null 2>&1; then
+  echo "WARNING: $VSIX was not produced — VS Code extension not bundled"
+else
+  echo "WARNING: node not found, so $VSIX could not be built — VS Code extension not bundled"
+fi
 # The bee app icon (regenerate with ./make-icon.sh).
 if [ -f AppIcon.icns ]; then cp AppIcon.icns "$R/AppIcon.icns"; fi
 

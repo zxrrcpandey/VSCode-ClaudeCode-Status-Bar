@@ -61,6 +61,13 @@ extension AppDelegate {
         guard r.available else { return }
         let now = Date().timeIntervalSince1970 * 1000
 
+        // One thing at a time. Each pass presents the most urgent thing not yet
+        // said and marks it said, so the very next pass moves on to the next
+        // candidate — which replaced a banner a third of a second after it went
+        // up, before anyone could read it. Leave what is on screen alone unless
+        // a hard rejection has arrived, which outranks everything.
+        if banner.isVisible, r.blocked == nil || banner.showing == "blocked" { return }
+
         // Already refused by the server — the one case that is certain.
         if let b = r.blocked {
             let key = "blocked:\(Int(b.resetsAt / 60_000))"
@@ -90,7 +97,7 @@ extension AppDelegate {
             // it keeps growing, without warning every minute.
             let step = s.ctx / 250_000
             let key = "compact:\(s.id):\(step)"
-            if snoozed("compact:\(s.id)") || alreadyShown(key) { continue }
+            if snoozed("compact") || snoozed("compact:\(s.id)") || alreadyShown(key) { continue }
             markShown(key)
             present(compactSpec(s))
             return
@@ -148,13 +155,17 @@ extension AppDelegate {
             : ""
         // With no measured pace yet, say the plain facts rather than invent one.
         guard w.calibrated, let rate = w.burnPerHour, rate > 0.05 else { return refill }
-        let pace = rate >= 1 ? String(format: "%.0f%% an hour", rate) : String(format: "%.1f%% an hour", rate)
+        // One decimal place everywhere, so the arithmetic in the sentence
+        // closes. Rounded to "2% an hour" next to a clock time worked out from
+        // 2.4 invites the reader to do the division and catch the warning
+        // contradicting itself — in the one screen built to be believed.
+        let pace = String(format: "%.1f%% an hour", rate)
         guard let out = w.exhaustAt, w.resetsAt > 0 else { return "You are using about \(pace). " + refill }
         if w.beatsReset {
-            return "You are using about \(pace), so at this pace it runs out around \(LimitFmt.clock(out)) — "
+            return "At the last half-hour's pace — about \(pace) — it runs out around \(LimitFmt.clock(out)), "
                 + "and it does not refill until \(LimitFmt.clock(w.resetsAt)), \(LimitFmt.until(w.resetsAt)) away."
         }
-        return "You are using about \(pace), which still gets you to the refill in \(LimitFmt.until(w.resetsAt))."
+        return "At the last half-hour's pace — about \(pace) — it still gets to the refill in \(LimitFmt.until(w.resetsAt))."
     }
 
     private func dismissActions(_ kind: String) -> [BannerAction] {
@@ -164,10 +175,44 @@ extension AppDelegate {
         ]
     }
 
+    private static func cap(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+
+    /// A per-model window's percentage is of that model's slice of the week,
+    /// not of the week. Left unsaid, 96% of a half-week allowance reads as
+    /// "my week is gone" when half of it is untouched — and the natural
+    /// response is to stop working for two days.
+    private func sliceLine(_ w: LimitWindow, _ r: LimitReport) -> String {
+        guard w.model != nil else { return "" }
+        let week = (r.weekly?.trusted ?? false) ? r.weekly?.shown : nil
+        if let share = w.sharePercent, share > 0 {
+            let of = " That allowance is \(Int(share))% of your week, set aside for this model"
+            return week.map { "\(of), and your week overall is \($0)% used." } ?? "\(of)."
+        }
+        return week.map { " Your week overall is \($0)% used." } ?? ""
+    }
+
+    /// Where the figure came from. Once there is a local estimate it is no
+    /// longer the server's own answer, and `/usage` will say something a few
+    /// points different — which is fine if Pulse said so, and corrosive if it
+    /// presented a guess as a fact.
+    private func provenance(_ w: LimitWindow, _ r: LimitReport) -> String {
+        if w.calibrated, let age = r.ageMs {
+            return " (Estimated: Claude Code last checked \(LimitFmt.ago(age)) ago at \(w.percent)%, "
+                + "plus what you have spent since.)"
+        }
+        if let age = r.ageMs, r.stale {
+            return " (Claude Code last checked this \(LimitFmt.ago(age)) ago.)"
+        }
+        return ""
+    }
+
     private func limitSpec(_ w: LimitWindow, tier: LimitTier, report: LimitReport) -> BannerSpec {
         let critical = tier >= .critical
         let pct = w.shown
         let left = max(0, 100 - pct)
+        // What the percentage is a percentage of, named the same way in the
+        // title and the body.
+        let what = w.model.map { "weekly \($0) limit" } ?? w.label
         var body: String
         var title: String
 
@@ -184,24 +229,24 @@ extension AppDelegate {
             }
             body += effortHint()
         } else if critical {
-            title = "Weekly limit almost gone — \(pct)%"
-            body = "About \(left)% left, and the week does not refill for \(LimitFmt.until(w.resetsAt)) "
+            title = "\(Self.cap(what)) almost gone — \(pct)%"
+            body = "About \(left)% left, and it does not refill for \(LimitFmt.until(w.resetsAt)) "
                 + "(\(LimitFmt.clock(w.resetsAt))). Spend what is left on what matters most."
-                + modelHint() + effortHint()
+                + sliceLine(w, report)
+                // Naming a model is no help when the limit that bit is that
+                // model's own slice.
+                + (w.model == nil ? modelHint() : "") + effortHint()
         } else {
-            title = "\(w.label.prefix(1).uppercased() + w.label.dropFirst()) \(pct)% used"
+            title = "\(Self.cap(what)) \(pct)% used"
             // Joined rather than concatenated: any of these can be empty, and
             // gluing them produces a leading space or an empty banner body.
-            body = [rateLine(w), modelHint(), effortHint()]
+            body = [rateLine(w), sliceLine(w, report), w.model == nil ? modelHint() : "", effortHint()]
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
             if body.isEmpty { body = "Worth keeping an eye on from here." }
         }
-        if let m = w.model { title = "Weekly \(m) limit \(pct)% used" }
-        if !w.calibrated, let age = report.ageMs, report.stale {
-            body += " (Claude Code last checked this \(LimitFmt.ago(age)) ago.)"
-        }
+        body += provenance(w, report)
 
         var actions = dismissActions(w.key)
         actions.insert(BannerAction(title: "See my usage") {
@@ -215,7 +260,9 @@ extension AppDelegate {
             title: title,
             body: body,
             fill: Double(pct) / 100,
-            fillLabel: w.resetsAt > 0 ? "\(pct)% · refills in \(LimitFmt.until(w.resetsAt))" : "\(pct)%",
+            fillLabel: w.resetsAt > 0
+                ? "\(w.tag) \(w.shownText) · refills in \(LimitFmt.until(w.resetsAt))"
+                : "\(w.tag) \(w.shownText)",
             actions: actions,
             // A critical warning stays until it is acknowledged.
             autoDismiss: critical ? nil : 75)
@@ -252,15 +299,24 @@ extension AppDelegate {
     }
 
     private func compactSpec(_ s: SessionContext) -> BannerSpec {
-        let share = Int((s.contextShare * 100).rounded())
+        let share = s.contextSharePct
+        // Say what was actually measured. Averaged over several replies it is
+        // a fact about the conversation; taken from one reply it is a fact
+        // about that reply, because output costs five times a cached read and
+        // one short answer sends the share to 97% on its own.
+        let measured = s.turns >= 3
+            ? "In \(s.project), re-reading the conversation has been about \(share)% of the cost of your "
+                + "last \(s.turns) replies — you pay for it on every turn."
+            : "In \(s.project), the latest reply spent about \(share)% of its cost re-reading the "
+                + "conversation so far, and every reply after it pays that again."
         return BannerSpec(
             kind: "compact:\(s.id)",
             accent: .systemBlue,
             icon: "🧹",
             title: "This chat now costs \(LimitFmt.tokens(s.ctx)) tokens a reply",
-            body: "In \(s.project), about \(share)% of every reply is Claude re-reading the conversation so far — "
-                + "you pay for all of it, every turn. Type /compact in that session: it keeps a summary, "
-                + "drops the rest, and the next replies cost a fraction of this.",
+            body: measured
+                + " Type /compact in that session: it keeps a summary, drops the rest, "
+                + "and the next replies cost a fraction of this.",
             fill: nil,
             fillLabel: nil,
             actions: [
@@ -293,11 +349,12 @@ extension AppDelegate {
             menu.addItem(detail("⛔ blocked — back at \(LimitFmt.clock(b.resetsAt)) (\(LimitFmt.until(b.resetsAt)))"))
         }
         for w in r.windows {
-            let row = detail(Self.windowLine(w))
+            let row = detail(Self.windowLine(w, ageMs: r.ageMs))
             menu.addItem(row)
             liveRows.append((row, { [weak self] in
-                guard let cur = self?.limits.report.windows.first(where: { $0.key == w.key }) else { return nil }
-                return Self.windowLine(cur)
+                guard let me = self,
+                      let cur = me.limits.report.windows.first(where: { $0.key == w.key }) else { return nil }
+                return Self.windowLine(cur, ageMs: me.limits.report.ageMs)
             }, true))
             if w.calibrated, let rate = w.burnPerHour, rate > 0.05, let out = w.exhaustAt {
                 menu.addItem(detail(String(format: "%@%.1f%%/h → empty around %@",
@@ -305,16 +362,25 @@ extension AppDelegate {
             }
         }
         if !r.breakdown.isEmpty {
-            menu.addItem(detail("this week: " + r.breakdown.map { "\($0.label) \($0.percent)%" }.joined(separator: " · ")))
+            // These are shares of the week's usage and sum to 100 — not shares
+            // of the limit. Printed as a bare "Claude Code 88%" under "weekly
+            // limit: 8%", two adjacent percentages read as one denominator,
+            // and the user who built this because he thought he was pinned at
+            // the weekly limit now has UI agreeing with him.
+            menu.addItem(detail("where this week's usage went: "
+                                + r.breakdown.map { "\($0.label) \($0.percent)%" }.joined(separator: " · ")))
         }
         if r.stale, let age = r.ageMs {
             menu.addItem(detail("as of \(LimitFmt.ago(age)) ago — refreshes as Claude Code runs"))
+        }
+        if limits.failing, let why = limits.lastError {
+            menu.addItem(detail("⚠ these figures have stopped updating: \(why)"))
         }
         // The expensive-conversation hint, whether or not it has warned yet.
         let now = Date().timeIntervalSince1970 * 1000
         for s in r.sessions.prefix(3) where s.ctx >= 120_000 && now - s.updatedAt < 60 * 60_000 {
             menu.addItem(detail("\(s.project): \(LimitFmt.tokens(s.ctx)) context · "
-                                + "\(Int(s.contextShare * 100))% of every reply is re-reading it", indent: 2))
+                                + "\(s.contextSharePct)% of recent replies is re-reading it", indent: 2))
             if let e = s.effort, e == "max" || e == "xhigh" {
                 menu.addItem(detail("↳ \(e) effort — costs several times medium", indent: 3))
             }
@@ -334,8 +400,13 @@ extension AppDelegate {
         }
         let (tier, win) = policy.tier(r)
         if tier >= .warn, let w = win, !snoozed(w.key) {
-            return ["kind": w.key == "session" ? "session" : "weekly", "tier": tier.rawValue,
-                    "pct": w.shown, "until": w.resetsAt > 0 ? LimitFmt.until(w.resetsAt) : ""]
+            var payload: [String: Any] = [
+                "kind": w.key == "session" ? "session" : "weekly", "tier": tier.rawValue,
+                "pct": w.shown, "until": w.resetsAt > 0 ? LimitFmt.until(w.resetsAt) : "",
+            ]
+            // What the percentage is of, when it is not the whole week.
+            if let m = w.model { payload["what"] = "weekly \(m) limit" }
+            return payload
         }
         let now = Date().timeIntervalSince1970 * 1000
         if let s = policy.bloated(r, now: now).first, !snoozed("compact:\(s.id)") {
@@ -349,16 +420,32 @@ extension AppDelegate {
 
     /// One window as a menu row. Says when the figure is the cached one
     /// rather than a live estimate, so the number is never oversold.
-    static func windowLine(_ w: LimitWindow) -> String {
+    static func windowLine(_ w: LimitWindow, ageMs: Double? = nil) -> String {
         guard w.trusted else {
             // Honest about the gap rather than repeating a number for a window
-            // that has already rolled over.
-            return "\(w.label): waiting for a fresh reading"
-                + (w.resetsAt > 0 ? " · refills in \(LimitFmt.until(w.resetsAt))" : "")
+            // that has rolled over, or a reading too old to still describe it.
+            // Claude Code decides when to refresh that cache on a sampled
+            // schedule and can leave it a day or more behind, so name the one
+            // thing that fixes it.
+            var l = w.label + ": "
+            if w.outdated, let age = ageMs {
+                l += "last checked \(LimitFmt.ago(age)) ago — run /usage in Claude Code to refresh"
+            } else {
+                l += "waiting for a fresh reading"
+            }
+            if w.resetsAt > 0 { l += " · refills in \(LimitFmt.until(w.resetsAt))" }
+            return l
         }
         var l = "\(w.label): \(w.shown)%"
         if let share = w.sharePercent { l += " of its \(Int(share))% share" }
-        if !w.calibrated { l += " (last checked)" }
+        // Which of the two numbers this is. A projection carries the reading it
+        // was projected from, so "/usage says 71%" is never a contradiction.
+        if w.calibrated {
+            l += " (estimated from \(w.percent)% at the last check"
+            l += w.calibrationSamples > 0 ? ", \(w.calibrationSamples) readings)" : ")"
+        } else {
+            l += " (last checked)"
+        }
         if w.resetsAt > 0 { l += " · refills in \(LimitFmt.until(w.resetsAt))" }
         return l
     }
@@ -384,7 +471,15 @@ extension AppDelegate {
     }
 
     @objc func snoozeAllAlerts(_ sender: NSMenuItem) {
-        for kind in ["weekly", "session", "blocked"] { snooze(kind, hours: 4) }
+        // Every key actually in play, not a fixed list. A Max account reports a
+        // per-model window — "weekly_fable" on this one — which a hard-coded
+        // ["weekly", "session"] cannot reach, so the banner the user asked to
+        // silence would come straight back. The compact nudge is snoozed by a
+        // wildcard as well as per session, so a chat that starts after this
+        // click is covered too.
+        var kinds = Set(limits.report.windows.map { $0.key })
+        kinds.formUnion(["weekly", "session", "blocked", "compact"])
+        for kind in kinds { snooze(kind, hours: 4) }
         for s in limits.report.sessions { snooze("compact:\(s.id)", hours: 4) }
         banner.hide()
     }

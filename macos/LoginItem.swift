@@ -46,8 +46,28 @@ enum LoginItem {
         return p.hasPrefix("/Applications/") || p.hasPrefix(NSHomeDirectory() + "/Applications/")
     }
 
-    private static var agentInstalled: Bool {
+    /// Whether there is a plist on disk at all — enough to know there is
+    /// something to remove, but not that it would work.
+    private static var agentPresent: Bool {
         FileManager.default.fileExists(atPath: plistURL.path)
+    }
+
+    /// A *usable* agent: one that points at an executable that still exists.
+    ///
+    /// The path is baked in when the agent is written, so renaming the app,
+    /// moving it, or installing a build under a different bundle name strands
+    /// it — launchd then fails to spawn it at every login. Reporting that as
+    /// "on" would be bad enough on its own; it also disables the one repair
+    /// path there is, because the launch-time self-heal only runs when the
+    /// login item is off.
+    private static var agentInstalled: Bool {
+        guard let data = try? Data(contentsOf: plistURL),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let dict = plist as? [String: Any],
+              let args = dict["ProgramArguments"] as? [String],
+              let first = args.first
+        else { return false }
+        return first == executable && FileManager.default.isExecutableFile(atPath: first)
     }
 
     // MARK: Status
@@ -127,16 +147,37 @@ enum LoginItem {
             let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
             try data.write(to: plistURL, options: .atomic)
         } catch { return false }
-        // Load it now so it is registered before the next login, ignoring the
-        // "already bootstrapped" case.
-        launchctl(["bootout", "gui/\(getuid())/\(label)"])
-        return launchctl(["bootstrap", "gui/\(getuid())", plistURL.path])
+        // Load it now so it takes effect without a logout. Whether that
+        // succeeds is not what decides the outcome: launchd reads
+        // ~/Library/LaunchAgents at every login regardless, so once the plist
+        // is written the login item is installed. Returning the bootstrap's
+        // exit status instead produced an error dialog next to a ticked
+        // checkbox — and the obvious response, clicking it again, meant "off".
+        if ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] != label {
+            launchctl(["bootout", "gui/\(getuid())/\(label)"])
+        }
+        launchctl(["bootstrap", "gui/\(getuid())", plistURL.path])
+        return true
     }
 
+    /// Order matters, and so does not booting out our own job.
+    ///
+    /// `launchctl bootout` does not merely unload a job, it terminates it. When
+    /// the app was started at login by this very agent, the running app *is*
+    /// that job — so booting it out sends this process a SIGTERM. There is no
+    /// handler, so it dies immediately, before the line that deletes the plist:
+    /// the menu bar icon vanishes mid-click and the agent is still there at the
+    /// next login, with the box the user just unticked showing as on.
+    ///
+    /// Deleting the plist first is what makes "off" stick. An already-loaded
+    /// job simply goes when the app quits or the user logs out.
     private static func removeAgent() {
-        guard agentInstalled else { return }
-        launchctl(["bootout", "gui/\(getuid())/\(label)"])
+        guard agentPresent else { return }
         try? FileManager.default.removeItem(at: plistURL)
+        // launchd sets this to the job label for jobs it starts, and to
+        // application.<bundle-id>.<n>.<n> for a LaunchServices launch.
+        guard ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] != label else { return }
+        launchctl(["bootout", "gui/\(getuid())/\(label)"])
     }
 
     @discardableResult
@@ -151,16 +192,38 @@ enum LoginItem {
         return p.terminationStatus == 0
     }
 
+    // MARK: One copy only
+
+    /// Held for the lifetime of the process. The kernel releases it when the
+    /// process ends, however it ends, so a crash cannot leave it stuck.
+    private static var lockFD: Int32 = -1
+
+    /// Takes an exclusive lock, returning false if another copy already holds
+    /// it and this one should stand down.
+    ///
     /// A LaunchAgent starts the executable directly, which bypasses the check
     /// LaunchServices would normally do — so opening the app from Finder while
-    /// one is already running would put two icons in the menu bar.
+    /// one is already running would put two icons in the menu bar, two 0.25s
+    /// timers, and two writers on limits-history.json.
     ///
-    /// Compares process ids rather than just counting, so if two copies ever
-    /// do start at the same moment exactly one of them stands down.
-    static func anotherOlderInstanceIsRunning() -> Bool {
-        guard let id = Bundle.main.bundleIdentifier else { return false }
-        let me = ProcessInfo.processInfo.processIdentifier
-        return NSRunningApplication.runningApplications(withBundleIdentifier: id)
-            .contains { $0.processIdentifier != me && !$0.isTerminated && $0.processIdentifier < me }
+    /// A lock rather than a comparison of process ids. Pids wrap at 99999, so
+    /// on a long-running Mac the older instance can hold the *higher* pid and
+    /// "older" stops meaning "lower"; and a pid comparison has to wait for
+    /// LaunchServices registration, which has not happened yet at the moment
+    /// two simultaneous launches would need to resolve. A lock is atomic and
+    /// needs neither.
+    static func claimSingleInstance() -> Bool {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/claude-pulse")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let fd = open(dir.appendingPathComponent("app.lock").path, O_CREAT | O_WRONLY, 0o644)
+        // Nowhere to put the lock: better to run than to refuse to start.
+        guard fd >= 0 else { return true }
+        if flock(fd, LOCK_EX | LOCK_NB) != 0 {
+            close(fd)
+            return false
+        }
+        lockFD = fd
+        return true
     }
 }
