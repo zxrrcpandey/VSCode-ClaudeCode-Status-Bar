@@ -11,8 +11,10 @@ A tiny VS Code status bar indicator that always tells you what Claude Code is do
 | Done | `✓ Claude · done 2:14` | Claude finished; shows total time, fades to idle |
 | Error | `⚠ Claude · error` (red) | Response died (API error / connection lost); fades to idle |
 
-**100% local, zero cost.** The hooks run a small local Node script; the extension watches a
-state file. No API calls, no tokens, no network.
+**Local, and zero cost.** The hooks run a small local Node script; the extension watches a
+state file. No API calls, no tokens. Pulse itself never touches the network — the one
+exception is [keeping the usage reading fresh](#keeping-the-reading-fresh), where it has your
+own Claude Code run `/usage`, and that can be switched off.
 
 ## macOS menu bar app
 
@@ -119,9 +121,9 @@ transcript files (`~/.claude/projects/**/*.jsonl`) — still no API calls:
 ## Usage limits — knowing before you run out
 
 Claude Code asks the server how much of your plan is left and caches the answer in
-`~/.claude.json` (`cachedUsageUtilization`). Pulse reads that cache — it never writes to it,
-and still makes no API calls — so it can show the real percentages: the 5-hour window, the
-week, and any per-model window, each with the time it refills.
+`~/.claude.json` (`cachedUsageUtilization`). Pulse reads that cache — it never writes to it —
+so it can show the real percentages: the 5-hour window, the week, and any per-model window,
+each with the time it refills.
 
 **That cache is not a live meter, and this is the single most important thing to know about
 it.** Claude Code decides when to refresh it on a sampled schedule — the feature flag
@@ -139,6 +141,36 @@ So Pulse does not show a figure it cannot stand behind:
   Pulse says *"last checked 35h ago — run `/usage` in Claude Code to refresh"* instead of
   printing the number. Running `/usage` is what fetches a fresh one.
 - Otherwise it shows the number, and says which kind of number it is.
+
+### Keeping the reading fresh
+
+Withholding a stale number is honest, but it is not much of a warning system. So Pulse also
+gets a new one. Once the reading is more than twenty minutes old **and** tokens have been
+spent since it was taken, it runs `claude -p /usage` in the background, which makes Claude
+Code fetch the figures exactly as typing `/usage` does. Claude Code answers that command by
+itself: nothing is sent to a model, and it costs no tokens. On the machine this was built on
+the cached reading had said 8% of the week for two days; the first check said 24%.
+
+This is the one thing Pulse does that reaches the network, and it is your own Claude Code
+doing the reaching, with your own login. What it is careful about:
+
+- **It does not behave like you opening Claude Code.** No transcript is kept, no MCP servers
+  are started and none of your hooks run, and it is started in an empty temporary folder so
+  there is no project to pick settings or instructions up from.
+- **An account nobody is using is not polled.** With nothing spent since the last reading
+  there is nothing new to ask about. API-key installs, which have no plan limits, are never
+  asked.
+- **A check that goes unanswered is not repeated every minute.** Signed out, offline, or a
+  Claude Code too old to answer without a terminal (2.1.69 replies *Unknown skill: usage*):
+  Pulse waits two hours, and the menu says the last check went unanswered.
+- **It asks the newest Claude Code it can find** — usually the one inside the VS Code
+  extension, which is far ahead of a `claude` on the PATH that was installed once and
+  forgotten.
+
+*Usage Warnings › Keep the usage figures up to date* switches it off, and *Check Usage Now*
+does it on demand; in VS Code those are `claudePulse.keepUsageFresh` and **Claude Pulse: Check
+Usage Now**. Where the macOS app is running it does the checking and the extension stands
+back, so the two never both ask. From a terminal: `ClaudePulse --check-usage`.
 
 To stretch a good reading further, Pulse keeps a small local ledger of what the transcripts
 say you have spent, per minute, and pairs two cached readings with the tokens spent between
@@ -184,6 +216,68 @@ rest; the next replies cost a fraction. Two other levers show up in the same pla
 (Opus costs multiples of Sonnet for the same tokens) and the effort level (Claude Code's own
 catalog warns that Max "can consume 3.5× or more usage than Medium").
 
+### Making Claude Code compact by itself
+
+A nudge only works if you act on it. Claude Code already compacts automatically — but only
+when the model's window is full, and on a 1M-context model that means about a million tokens:
+ask it (`claude -p /autocompact`) and it answers *"1m tokens (default for this model)"*. On the
+machine this was measured on, the one automatic compaction in a week fired at 966k.
+
+Claude Code has a setting that moves that point, `autoCompactWindow`, and
+***Compact Chats Automatically*** in the menu (or *Claude Pulse: Compact Conversations
+Automatically* in VS Code) sets it for you:
+
+- **At 250k — recommended.** Replaying a real week of transcripts with it, the main
+  conversations cost 46% less for the same work, and the whole week 26% less. It compacts about
+  twice as often, so Claude forgets detail sooner and may re-read a file now and then.
+- **At 400k** — compacts less often, saves less (37% and 20% on the same week).
+- **Claude Code's default** — puts it back.
+
+It is Claude Code's own setting, so nothing of Pulse's runs when it fires and it keeps working
+with the app closed. Whatever is in force is the row that carries the tick, including a size
+you chose yourself with `/autocompact` inside Claude Code. Three things Claude Code does with
+it, checked against 2.1.296, that the script takes care of:
+
+- A model's own entry beats the top-level setting, and that is where `/autocompact` saves. One
+  left at `auto`, or at a larger number, would quietly exempt that model — so those are taken
+  out, and remembered so that going back to the default restores them. An entry that compacts
+  *earlier* is left alone.
+- `CLAUDE_CODE_AUTO_COMPACT_WINDOW` beats everything. With that set in `settings.json`, the
+  menu says so instead of offering a switch that would do nothing.
+- A value outside 100k–1M is silently ignored by Claude Code, so it is refused here.
+
+`~/.claude/settings.json` is backed up first. Conversations already open pick the change up
+when they are next started. For scripted installs: `ClaudePulse --autocompact 250000`, or
+`--autocompact default`; without the app, `node scripts/set-autocompact.js [--tokens N | --remove]`.
+
+### Before an idle chat gets expensive
+
+Claude keeps a conversation ready to be re-read cheaply for a while after each reply — an hour
+on a plan; the transcript records which, so Pulse reads it rather than assuming. Come back
+after that and your next message has to write the whole conversation into the cache again
+instead of re-reading it. A cached read is priced at a tenth of an input token and a cache
+write at 1.25 to 2 times one, so that single message costs well over ten times what the one
+before it did. Measured over the same week, 29 returns to a conversation left for more than
+an hour cost **11% of the week** between them, each one as much as eleven ordinary replies —
+and that is counting the write at the lower price.
+
+The only cheap moment to avoid it is before you leave, so that is when Pulse speaks. About
+fifteen minutes before a large, idle conversation goes cold, a banner says *"Stepping away?
+Compact before 3:42 PM"* — with the size, what the reload will cost next to that chat's recent
+replies, and a button that copies `/compact`. It is deliberately narrow:
+
+- Only when the next move is yours: the turn has finished, or Claude is waiting on an answer
+  (then the advice is to answer in time). A session still working is left alone.
+- Only with someone at the Mac — or looking at that VS Code window — because nobody else can
+  act on it. It is taken down the moment the deadline passes or the chat is picked up again,
+  rather than left there contradicting the screen.
+- Once per pause, never for the five-minute cache, and not for a chat you have said *Not this
+  chat* about.
+
+After a conversation has gone cold the advice changes, because compacting it would have to
+load it first. The menu and the tooltip then say so — *"gone cold at 3:42 PM — the next
+message reloads all of it. Done with it? Start a new chat."*
+
 ## Buddy — a character that reacts to Claude
 
 **View → Open View… → "Buddy"** (or run *Claude Pulse: Open Buddy*) adds a panel tab with a
@@ -217,11 +311,14 @@ lives in its own panel (the same approach vscode-pets uses) — it cannot walk o
 
 ```sh
 # Run the regression suites (each builds its own throwaway HOME):
-#   HOME=$(mktemp -d) node scripts/test-waiting.js     # the waiting-state rules
+#   node scripts/test-waiting.js                       # the waiting-state rules
 #   node scripts/test-limits.js                        # the usage-limit maths
-# …and the same limit suite through the runtime the macOS app uses:
+#   node scripts/test-autocompact.js                   # what the auto-compact script leaves alone
+# …and the same two suites through the runtime the macOS app uses:
 #   PULSE_LIMITS_BIN=/Applications/ClaudePulse.app/Contents/MacOS/pulse-hook \
 #     node scripts/test-limits.js
+#   PULSE_LIMITS_BIN=/Applications/ClaudePulse.app/Contents/MacOS/pulse-hook \
+#     node scripts/test-autocompact.js
 
 # 1. Wire up the hooks (backs up settings.json first; idempotent)
 node scripts/install-hooks.js
@@ -253,6 +350,11 @@ worth removing by hand is `~/Library/LaunchAgents/com.warroom.claude-pulse.plist
 
 Backups of `settings.json` are left next to it as `settings.json.claude-pulse-backup-*`
 (the newest five are kept; older ones are pruned).
+
+One thing is left in place on purpose: an auto-compact size you chose. `autoCompactWindow` is
+Claude Code's own setting and works without Claude Pulse, so uninstalling does not undo it.
+Choose *Claude Code's Default* first if you want it gone, or delete that line from
+`~/.claude/settings.json`.
 
 ## Troubleshooting
 
@@ -332,6 +434,11 @@ Backups of `settings.json` are left next to it as `settings.json.claude-pulse-ba
 - `claudePulse.buddyUsageRemarks` — let the desktop character mention a limit out loud
   (default on). Separate from `showLimits`, so you can keep the quiet badge without the
   commentary.
+- `claudePulse.awayReminder` — say so about fifteen minutes before a large, idle conversation
+  stops being cheap to come back to (default on)
+- `claudePulse.awayWarnTokens` — how large it has to be for that (default 200000)
+- `claudePulse.keepUsageFresh` — have Claude Code fetch a new usage reading once the one it
+  holds has aged out (default on; costs no tokens)
 
 The macOS app reads the same things from its own domain, so `defaults write` tunes it
 without a restart:
@@ -341,4 +448,7 @@ defaults write com.warroom.claude-pulse limitWarnWeekly -int 60
 defaults write com.warroom.claude-pulse contextWarnTokens -int 250000
 defaults write com.warroom.claude-pulse limitAlerts -bool false   # no banners
 defaults write com.warroom.claude-pulse contextNudge -bool false  # no /compact nudge
+defaults write com.warroom.claude-pulse awayNudge -bool false     # no idle-chat reminder
+defaults write com.warroom.claude-pulse awayWarnTokens -int 150000
+defaults write com.warroom.claude-pulse usageAutoCheck -bool false  # never ask Claude Code for a reading
 ```

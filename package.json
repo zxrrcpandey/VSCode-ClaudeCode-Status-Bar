@@ -2,7 +2,7 @@
   "name": "claude-pulse",
   "displayName": "Claude Pulse",
   "description": "Status bar indicator for Claude Code: working, task progress, needs input, done. 100% local — no API calls.",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "publisher": "warroom",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -63,6 +63,14 @@
       {
         "command": "claudePulse.statusLine",
         "title": "Claude Pulse: Show Usage Inside Claude Code"
+      },
+      {
+        "command": "claudePulse.autoCompact",
+        "title": "Claude Pulse: Compact Conversations Automatically"
+      },
+      {
+        "command": "claudePulse.checkUsage",
+        "title": "Claude Pulse: Check Usage Now"
       }
     ],
     "configuration": {
@@ -170,6 +178,22 @@
           "type": "boolean",
           "default": true,
           "description": "Let the desktop character mention a usage limit out loud. Turn it off to keep the quiet status bar badge without the commentary."
+        },
+        "claudePulse.awayReminder": {
+          "type": "boolean",
+          "default": true,
+          "description": "Remind you about fifteen minutes before a large, idle conversation stops being cheap to come back to. Claude keeps a conversation ready for an hour after each reply; after that the next message reloads all of it at full price, and /compact beforehand is the only cheap way round it."
+        },
+        "claudePulse.awayWarnTokens": {
+          "type": "number",
+          "default": 200000,
+          "minimum": 20000,
+          "description": "How large a conversation has to be before that reminder is worth giving. One reload costs the whole conversation at full price — over ten times an ordinary reply — so this is lower than contextWarnTokens."
+        },
+        "claudePulse.keepUsageFresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Have Claude Code fetch a new usage reading once the one it holds is more than twenty minutes old and tokens have been spent since. Left to itself Claude Code refreshes that reading rarely, and every limit warning here starts from it. This runs `claude -p /usage` in the background: Claude Code contacts Anthropic exactly as it does when you type /usage, and it costs no tokens. Where the macOS app is running, the app does this instead."
         }
       }
     }

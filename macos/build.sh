@@ -50,7 +50,8 @@ universal "$APP/Contents/MacOS/pulse-hook" PulseHook.swift
 R="$APP/Contents/Resources"
 # The same scripts and character page the VS Code extension uses.
 cp ../usage-scan.js ../limits-scan.js ../buddy.html ../hooks/hook.js \
-   ../scripts/install-hooks.js ../scripts/uninstall-hooks.js ../scripts/install-statusline.js "$R/"
+   ../scripts/install-hooks.js ../scripts/uninstall-hooks.js ../scripts/install-statusline.js \
+   ../scripts/set-autocompact.js "$R/"
 # The VS Code extension rides along, so one download sets up both.
 VSIX="../claude-pulse-$VERSION.vsix"
 # Always rebuild when node is available. Building only when the file is absent

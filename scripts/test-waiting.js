@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 /* Regression tests for the waiting-state semantics: drives the real
  * hooks/hook.js and mirrors extension.js effectiveState() exactly.
- * Run against a throwaway HOME so your real state files are untouched:
- *   HOME=$(mktemp -d) node scripts/test-waiting.js
+ *   node scripts/test-waiting.js
+ *
+ * Always in a throwaway HOME of its own. It used to trust the caller to set
+ * one, and run plainly it emptied the real state directory and left nine fake
+ * sessions sitting in the menu as "agent needs you".
  */
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const cp = require('child_process');
 
 const REPO = path.join(__dirname, '..');
-const HOME = process.env.HOME;
+const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-waiting-'));
 const DIR = path.join(HOME, '.claude', 'claude-pulse', 'state');
+const ENV = Object.assign({}, process.env, { HOME });
 const TIMEOUT_MS = 45000;          // package.json default
 const PROVISIONAL_MS = Infinity;   // provisionalWaitSeconds: 0 (default)
 
@@ -36,7 +41,7 @@ function effectiveState(s, now) {
 const HOOK_BIN = process.env.PULSE_HOOK_BIN;
 const fire = (sid, o) => cp.execFileSync(HOOK_BIN || 'node',
   HOOK_BIN ? ['run', path.join(REPO, 'hooks/hook.js')] : [path.join(REPO, 'hooks/hook.js')],
-  { input: JSON.stringify(Object.assign({ session_id: sid, cwd: '/tmp/p' }, o)) });
+  { input: JSON.stringify(Object.assign({ session_id: sid, cwd: '/tmp/p' }, o)), env: ENV });
 const read = (sid) => JSON.parse(fs.readFileSync(path.join(DIR, sid + '.json'), 'utf8'));
 const write = (sid, s) => { fs.mkdirSync(DIR, { recursive: true }); fs.writeFileSync(path.join(DIR, sid + '.json'), JSON.stringify(s)); };
 const age = (sid, ms) => { const s = read(sid); for (const k of ['waiting_since', 'confirmed_at', 'started_at', 'updated_at']) if (s[k]) s[k] -= ms; write(sid, s); };
@@ -47,8 +52,6 @@ function check(name, got, want) {
   console.log((ok ? '  PASS  ' : '  FAIL  ') + name + '  → ' + got + (ok ? '' : '  (expected ' + want + ')'));
   ok ? pass++ : fail++;
 }
-
-fs.rmSync(DIR, { recursive: true, force: true });
 
 // 1. The reported bug: subagent permission flood must never show yellow.
 {
@@ -142,5 +145,6 @@ fs.rmSync(DIR, { recursive: true, force: true });
   check('denial clears the wait', effectiveState(read(sid), Date.now()), 'working');
 }
 
+fs.rmSync(HOME, { recursive: true, force: true });
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

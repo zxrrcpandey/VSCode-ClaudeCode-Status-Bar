@@ -74,6 +74,13 @@ function main() {
     }
     writeFileAtomic(SETTINGS, JSON.stringify(settings, null, 2) + '\n');
     console.log('Removed Claude Pulse hooks from ' + SETTINGS + ' (backup: ' + backup + ')');
+    // Unlike the status line, this does not depend on anything being deleted
+    // below: it is Claude Code's own setting and goes on working. Say that it
+    // is still there rather than leave it to be discovered.
+    if (settings.autoCompactWindow !== undefined) {
+      console.log('Left autoCompactWindow (' + settings.autoCompactWindow + ') in place — it is Claude Code\'s own '
+        + 'setting and works without Claude Pulse. Delete that line from ' + SETTINGS + ' to undo it.');
+    }
   }
   fs.rmSync(PULSE_DIR, { recursive: true, force: true });
   console.log('Removed ' + PULSE_DIR);

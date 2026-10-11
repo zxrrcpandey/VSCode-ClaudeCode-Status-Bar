@@ -61,6 +61,14 @@ extension AppDelegate {
         guard r.available else { return }
         let now = Date().timeIntervalSince1970 * 1000
 
+        // A reminder with a deadline in it is wrong the moment the deadline
+        // passes or the chat is picked up again. Take it down rather than
+        // leave it contradicting what is on the screen behind it.
+        if let kind = banner.showing, kind.hasPrefix("away:"),
+           !policy.goingCold(r, now: now).contains(where: { "away:\($0.id)" == kind }) {
+            banner.hide()
+        }
+
         // One thing at a time. Each pass presents the most urgent thing not yet
         // said and marks it said, so the very next pass moves on to the next
         // candidate — which replaced a banner a third of a second after it went
@@ -86,6 +94,22 @@ extension AppDelegate {
             if !snoozed(w.key), !alreadyShown(key) {
                 markShown(key)
                 present(limitSpec(w, tier: tier, report: r))
+                return
+            }
+        }
+
+        // A large conversation about to go cold, while it is still cheap to do
+        // something about. Ahead of the nudge below because this one has a
+        // deadline — and only with someone at the Mac, because nobody else
+        // can act on it in time.
+        if LimitPolicy.userIsHere() {
+            for s in policy.goingCold(r, now: now) {
+                // One reminder per pause: the next reply moves the deadline,
+                // and the key with it.
+                let key = "away:\(s.id):\(Int(s.cacheExpiresAt / 60_000))"
+                if snoozed("away") || snoozed("away:\(s.id)") || alreadyShown(key) { continue }
+                markShown(key)
+                present(awaySpec(s, now: now))
                 return
             }
         }
@@ -309,6 +333,24 @@ extension AppDelegate {
                 + "last \(s.turns) replies — you pay for it on every turn."
             : "In \(s.project), the latest reply spent about \(share)% of its cost re-reading the "
                 + "conversation so far, and every reply after it pays that again."
+        var actions = [
+            BannerAction(title: "Copy “/compact”") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("/compact", forType: .string)
+            },
+            BannerAction(title: "Not this chat") { [weak self] in self?.snooze("compact:\(s.id)", hours: 12) },
+            BannerAction(title: "Later", prominent: true) { [weak self] in self?.snooze("compact:\(s.id)", hours: 1) },
+        ]
+        // Being asked for the same thing in every long chat is a sign it
+        // should not need asking. Claude Code can do it by itself; offer that
+        // wherever nothing has been chosen yet.
+        let ac = limits.report.autoCompact
+        let canAutomate = ac.window == nil && ac.env == nil && !ac.off
+        if canAutomate, let size = LimitPolicy.compactPresets.first {
+            actions.insert(BannerAction(title: "Always at \(LimitFmt.tokens(size))") { [weak self] in
+                self?.applyAutoCompact(size)
+            }, at: 1)
+        }
         return BannerSpec(
             kind: "compact:\(s.id)",
             accent: .systemBlue,
@@ -316,18 +358,58 @@ extension AppDelegate {
             title: "This chat now costs \(LimitFmt.tokens(s.ctx)) tokens a reply",
             body: measured
                 + " Type /compact in that session: it keeps a summary, drops the rest, "
-                + "and the next replies cost a fraction of this.",
+                + "and the next replies cost a fraction of this."
+                + (canAutomate ? " Or have Claude Code do it by itself from now on." : ""),
             fill: nil,
             fillLabel: nil,
-            actions: [
-                BannerAction(title: "Copy “/compact”") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString("/compact", forType: .string)
-                },
-                BannerAction(title: "Not this chat") { [weak self] in self?.snooze("compact:\(s.id)", hours: 12) },
-                BannerAction(title: "Later", prominent: true) { [weak self] in self?.snooze("compact:\(s.id)", hours: 1) },
-            ],
+            actions: actions,
             autoDismiss: 90)
+    }
+
+    /// The one moment a pause is cheap to prepare for. Says when it ends as a
+    /// clock time, so the banner is still true however long it is looked at —
+    /// and goes away by itself the minute it would stop being true.
+    private func awaySpec(_ s: SessionContext, now: Double, preview: Bool = false) -> BannerSpec {
+        let by = LimitFmt.time(s.cacheExpiresAt)
+        let kept = s.cacheExpiresAt - s.repliedAt
+        let span = abs(kept - 3_600_000) < 60_000 ? "an hour" : "\(max(1, Int(kept / 60_000))) minutes"
+        // Only with enough recent replies behind it to mean something.
+        let cost = s.reloadTimes.flatMap {
+            $0 >= 2 ? " — about what \(Int($0.rounded())) ordinary replies there cost" : nil
+        } ?? ""
+        let holds = "holds \(LimitFmt.tokens(s.ctx)) tokens. Claude keeps a chat ready for \(span) after each reply; "
+        var actions: [BannerAction] = []
+        let title: String, body: String
+        if s.waitingOnUser {
+            title = "Claude is waiting — answer before \(by)"
+            body = "\(s.project) asked for your input and \(holds)"
+                + "after \(by) it has to load all of that again at full price\(cost). "
+                + "Answering before then avoids it."
+        } else {
+            title = "Stepping away? Compact before \(by)"
+            body = "\(s.project) last replied \(LimitFmt.ago(now - s.repliedAt)) ago and \(holds)"
+                + "after \(by) your next message there has to load all of it again at full price\(cost). "
+                + "Coming back to it later? Type /compact in that chat now, while it is still cheap. "
+                + "Finished with it? Then there is nothing to do."
+            actions.append(BannerAction(title: "Copy “/compact”") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("/compact", forType: .string)
+            })
+        }
+        actions.append(BannerAction(title: "Not this chat") { [weak self] in self?.snooze("away:\(s.id)", hours: 12) })
+        actions.append(BannerAction(title: "Got it", prominent: true) { })
+        return BannerSpec(
+            // The preview must not look like a real one to evaluateAlerts,
+            // which takes down any "away:" banner whose session has moved on.
+            kind: preview ? "away-preview" : "away:\(s.id)",
+            accent: .systemTeal,
+            icon: "⏳",
+            title: title,
+            body: body,
+            fill: nil,
+            fillLabel: nil,
+            actions: actions,
+            autoDismiss: preview ? 60 : max(20, (s.cacheExpiresAt - now) / 1000))
     }
 
     // MARK: The dropdown section
@@ -371,21 +453,50 @@ extension AppDelegate {
                                 + r.breakdown.map { "\($0.label) \($0.percent)%" }.joined(separator: " · ")))
         }
         if r.stale, let age = r.ageMs {
-            menu.addItem(detail("as of \(LimitFmt.ago(age)) ago — refreshes as Claude Code runs"))
+            let how = !policy.autoCheck ? "refreshes as Claude Code runs"
+                : r.checkFailed ? "Claude Code did not answer the last check; /usage there does the same"
+                : "Pulse asks Claude Code again when more is spent"
+            menu.addItem(detail("as of \(LimitFmt.ago(age)) ago — \(how)"))
         }
         if limits.failing, let why = limits.lastError {
             menu.addItem(detail("⚠ these figures have stopped updating: \(why)"))
         }
         // The expensive-conversation hint, whether or not it has warned yet.
+        // Kept for as long as the session is known about, not just the first
+        // hour: the hour after that is when it has gone cold, which is the
+        // thing worth knowing before typing into it again.
         let now = Date().timeIntervalSince1970 * 1000
-        for s in r.sessions.prefix(3) where s.ctx >= 120_000 && now - s.updatedAt < 60 * 60_000 {
+        var unguarded = false
+        for s in r.sessions.prefix(3) where s.ctx >= 120_000 && now - s.updatedAt < 4 * 60 * 60_000 {
             menu.addItem(detail("\(s.project): \(LimitFmt.tokens(s.ctx)) context · "
                                 + "\(s.contextSharePct)% of recent replies is re-reading it", indent: 2))
             if let e = s.effort, e == "max" || e == "xhigh" {
                 menu.addItem(detail("↳ \(e) effort — costs several times medium", indent: 3))
             }
+            if let line = Self.cacheLine(s, now: now) { menu.addItem(detail(line, indent: 3)) }
+            if s.ctx >= (LimitPolicy.compactPresets.first ?? 250_000) { unguarded = true }
+        }
+        // A conversation already past where compacting pays, and nothing set
+        // to do it: point at the switch rather than leave it to be found.
+        let ac = r.autoCompact
+        if unguarded, ac.window == nil, ac.env == nil, !ac.off {
+            menu.addItem(detail("↳ nothing compacts these by itself yet — see “Compact Chats Automatically” below",
+                                indent: 2))
         }
         menu.addItem(NSMenuItem.separator())
+    }
+
+    /// Whether a conversation is still cheap to come back to. Clock times, so
+    /// the row stays true while the menu is open.
+    static func cacheLine(_ s: SessionContext, now: Double) -> String? {
+        guard s.cacheExpiresAt > 0, s.finished || s.waitingOnUser else { return nil }
+        let at = LimitFmt.time(s.cacheExpiresAt)
+        if s.cacheExpiresAt > now {
+            return "↳ cheap to continue until \(at) — then the next message reloads all of it"
+        }
+        // Compacting now would have to load it all first, so that is no
+        // longer the advice. What is still free is not coming back at all.
+        return "↳ gone cold at \(at) — the next message reloads all of it. Done with it? Start a new chat"
     }
 
     /// What the desktop character should know. Only the one step worth
@@ -409,6 +520,16 @@ extension AppDelegate {
             return payload
         }
         let now = Date().timeIntervalSince1970 * 1000
+        if LimitPolicy.userIsHere(), !snoozed("away"),
+           let s = policy.goingCold(r, now: now).first(where: { !snoozed("away:\($0.id)") }) {
+            return [
+                "kind": "away", "tier": 2, "ctx": LimitFmt.tokens(s.ctx), "project": s.project,
+                "by": LimitFmt.time(s.cacheExpiresAt), "waiting": s.waitingOnUser,
+                // Said once per pause, not once ever: the character keys what
+                // it has already said on this.
+                "id": "\(s.id):\(Int(s.cacheExpiresAt / 60_000))",
+            ]
+        }
         if let s = policy.bloated(r, now: now).first, !snoozed("compact:\(s.id)") {
             return ["kind": "compact", "tier": 2, "ctx": LimitFmt.tokens(s.ctx)]
         }
@@ -478,10 +599,95 @@ extension AppDelegate {
         // wildcard as well as per session, so a chat that starts after this
         // click is covered too.
         var kinds = Set(limits.report.windows.map { $0.key })
-        kinds.formUnion(["weekly", "session", "blocked", "compact"])
+        kinds.formUnion(["weekly", "session", "blocked", "compact", "away"])
         for kind in kinds { snooze(kind, hours: 4) }
-        for s in limits.report.sessions { snooze("compact:\(s.id)", hours: 4) }
+        for s in limits.report.sessions {
+            snooze("compact:\(s.id)", hours: 4)
+            snooze("away:\(s.id)", hours: 4)
+        }
         banner.hide()
+    }
+
+    @objc func toggleAwayNudge(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(!policy.awayNudge, forKey: "awayNudge")
+        policy = LimitPolicy.load()
+        if policy.awayNudge { evaluateAlerts() } else if banner.showing?.hasPrefix("away") == true { banner.hide() }
+    }
+
+    // MARK: Keeping the reading current
+
+    /// Every figure here starts from what Claude Code last fetched, and left
+    /// to itself it fetches rarely: two days old has been seen, with the week
+    /// at 8% in this menu and 24% in fact. So once the scanner says the
+    /// reading has aged out and tokens have been spent since, have Claude
+    /// Code fetch a new one.
+    func askUsageIfDue() {
+        guard policy.autoCheck, limits.report.checkDue else { return }
+        askUsage()
+    }
+
+    func askUsage(_ done: ((Bool, String) -> Void)? = nil) {
+        // One already running: share its answer rather than start a second.
+        if usageWaiters != nil {
+            if let done { usageWaiters?.append(done) }
+            return
+        }
+        usageWaiters = done.map { [$0] } ?? []
+        PulseSetup.markUsageAsked()
+        DispatchQueue.global(qos: .utility).async {
+            let r = PulseSetup.checkUsage()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let waiting = self.usageWaiters ?? []
+                self.usageWaiters = nil
+                self.limits.refresh { [weak self] in
+                    self?.limitsDone()
+                    waiting.forEach { $0(r.ok, r.output) }
+                }
+            }
+        }
+    }
+
+    @objc func toggleAutoCheck(_ sender: NSMenuItem) {
+        UserDefaults.standard.set(!policy.autoCheck, forKey: "usageAutoCheck")
+        policy = LimitPolicy.load()
+        if policy.autoCheck { askUsageIfDue() }
+    }
+
+    @objc func checkUsageNow(_ sender: NSMenuItem) {
+        askUsage { [weak self] ok, said in
+            guard let self else { return }
+            let a = NSAlert()
+            if ok {
+                let r = self.limits.report
+                a.messageText = "Usage is up to date"
+                a.informativeText = r.windows.map { AppDelegate.windowLine($0, ageMs: r.ageMs) }
+                    .joined(separator: "\n")
+            } else {
+                a.alertStyle = .warning
+                a.messageText = "Couldn’t get a fresh reading"
+                a.informativeText = said + "\n\nTyping /usage in Claude Code does the same thing."
+            }
+            a.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            a.runModal()
+        }
+    }
+
+    /// The idle-chat reminder, with this Mac's largest live conversation in it
+    /// where there is one, so the numbers being judged are real ones.
+    @objc func testAwayBanner(_ sender: NSMenuItem) {
+        let now = Date().timeIntervalSince1970 * 1000
+        var s = limits.report.sessions.first(where: { $0.ctx >= policy.awayWarn })
+            ?? SessionContext(id: "preview", project: "your-project", state: "done", ctx: 410_000,
+                              model: nil, effort: nil, turnCost: 0, contextShare: 0,
+                              compactedAt: 0, compactTrigger: nil, preTokens: nil, updatedAt: now,
+                              reloadTimes: 11)
+        s.state = "done"
+        s.waitingOnUser = false
+        s.repliedAt = now - 46 * 60_000
+        s.cacheExpiresAt = now + 14 * 60_000
+        banner.show(awaySpec(s, now: now, preview: true))
     }
 
     /// So the warning can be read, and its wording judged, long before it

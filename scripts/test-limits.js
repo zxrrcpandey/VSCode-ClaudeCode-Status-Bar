@@ -604,5 +604,242 @@ function bucket(units, cls) {
   check('a corrupt history file is replaced, not fatal', r.windows.length, 3);
 }
 
+// ------------------------------------------- when a conversation goes cold
+
+/* A usage record as newer Claude Code versions write it, saying which cache
+ * lifetime the turn's write asked for. */
+function cached(u, long, short) {
+  return Object.assign({}, u, {
+    cache_creation: { ephemeral_1h_input_tokens: long, ephemeral_5m_input_tokens: short },
+  });
+}
+
+function setState(home, sid, fields) {
+  const file = path.join(home, '.claude', 'claude-pulse', 'state', sid + '.json');
+  fs.writeFileSync(file, JSON.stringify(Object.assign(JSON.parse(fs.readFileSync(file, 'utf8')), fields)));
+}
+
+function writeSettings(home, value) {
+  fs.writeFileSync(path.join(home, '.claude', 'settings.json'),
+    typeof value === 'string' ? value : JSON.stringify(value));
+}
+
+const FRESH = (now) => LIMITS_UTIL(5, 5, { session: now + 3600000, weekly: now + 86400000 });
+
+{
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, FRESH(now), now - MIN);
+  const sid = 'aaaaaaaa-0000-0000-0000-00000000000a';
+  const last = now - 50 * MIN;
+  writeSession(home, sid, '/Users/x/idle', [
+    assistant(now - 58 * MIN, cached(usage(2, 2000, 396000, 800), 2000, 0)),
+    assistant(now - 54 * MIN, cached(usage(2, 2000, 398000, 800), 2000, 0)),
+    assistant(last, cached(usage(2, 2000, 400000, 800), 2000, 0)),
+    // A subagent still running re-reads its own context. It does nothing to
+    // keep this conversation warm, so it must not move the deadline.
+    assistant(now - 5 * MIN, cached(usage(2, 500, 30000, 100), 500, 0), { isSidechain: true }),
+  ], 'done');
+  const s = scan(home).sessions[sid];
+  check('an idle conversation goes cold an hour after its newest reply', s.cacheExpiresAt, last + 60 * MIN);
+  check('  …measured from the main conversation, not a subagent still running', s.at, last);
+  check('  …and the session is known to be finished', [s.state, s.waitingConfirmed], ['done', false]);
+  // What a cold return costs: the whole context written back at 1.25, next to
+  // the average of the recent replies that re-read it at 0.1.
+  const cost = (inp, cw, cr, out) => out * 5 + inp + cw * 1.25 + cr * 0.1;
+  const typical = (cost(2, 2000, 396000, 800) + cost(2, 2000, 398000, 800) + cost(2, 2000, 400000, 800)) / 3;
+  const want = (402002 * 1.25) / typical;
+  ok('  …a reload is priced against the recent replies', Math.abs(s.reloadTimes - want) < 1e-9,
+    s.reloadTimes.toFixed(2) + '× an ordinary reply');
+}
+
+{
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, FRESH(now), now - MIN);
+  const sid = 'aaaaaaaa-0000-0000-0000-00000000000b';
+  writeSession(home, sid, '/Users/x/short', [
+    assistant(now - 2 * MIN, cached(usage(2, 2000, 300000, 800), 0, 2000)),
+  ], 'done');
+  const s = scan(home).sessions[sid];
+  check('the short cache is read from the transcript, not assumed to be an hour',
+    s.cacheExpiresAt - s.at, 5 * MIN);
+  check('  …and one reply is not enough to price a reload', s.reloadTimes, null);
+}
+
+{
+  // Older Claude Code versions wrote no breakdown. An assumed hour would put a
+  // clock time on screen that nothing supports.
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, FRESH(now), now - MIN);
+  const sid = 'aaaaaaaa-0000-0000-0000-00000000000c';
+  writeSession(home, sid, '/Users/x/old-cc', [
+    assistant(now - 50 * MIN, usage(2, 2000, 400000, 800)),
+  ], 'done');
+  const s = scan(home).sessions[sid];
+  check('no lifetime recorded → no deadline claimed', [s.cacheTtlMs, s.cacheExpiresAt], [0, 0]);
+}
+
+{
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, FRESH(now), now - MIN);
+  const sid = 'aaaaaaaa-0000-0000-0000-00000000000d';
+  const last = now - 20 * MIN;
+  writeSession(home, sid, '/Users/x/quiet-turn', [
+    assistant(now - 25 * MIN, cached(usage(2, 2000, 300000, 800), 2000, 0)),
+    // Nothing new to cache on this one, so it says nothing about the lifetime
+    // — but it was still a request, and the clock restarts with it.
+    assistant(last, cached(usage(2, 0, 302000, 40), 0, 0)),
+  ], 'done');
+  const s = scan(home).sessions[sid];
+  check('a reply that wrote nothing keeps the lifetime and restarts the clock',
+    s.cacheExpiresAt, last + 60 * MIN);
+}
+
+{
+  // Just compacted: the conversation the clock was running for is gone.
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, FRESH(now), now - MIN);
+  const sid = 'aaaaaaaa-0000-0000-0000-00000000000e';
+  writeSession(home, sid, '/Users/x/compacted', [
+    assistant(now - 50 * MIN, cached(usage(2, 2000, 400000, 800), 2000, 0)),
+    { type: 'system', subtype: 'compact_boundary', timestamp: new Date(now - 49 * MIN).toISOString(),
+      compactMetadata: { trigger: 'manual', preTokens: 402002, postTokens: 9000 } },
+  ], 'done');
+  const s = scan(home).sessions[sid];
+  check('a conversation compacted since its last reply has no deadline to warn about',
+    [s.ctx, s.cacheExpiresAt], [9000, 0]);
+}
+
+{
+  const home = newHome();
+  const now = Date.now();
+  writeConfig(home, FRESH(now), now - MIN);
+  const asked = 'aaaaaaaa-0000-0000-0000-00000000000f';
+  const auto = 'aaaaaaaa-0000-0000-0000-000000000010';
+  const turn = [assistant(now - 50 * MIN, cached(usage(2, 2000, 400000, 800), 2000, 0))];
+  writeSession(home, asked, '/Users/x/asked', turn, 'waiting');
+  setState(home, asked, { reason: 'question', waiting_confirmed: true });
+  writeSession(home, auto, '/Users/x/auto', turn, 'waiting');
+  setState(home, auto, { reason: 'permission', waiting_confirmed: false });
+  const r = scan(home);
+  check('a prompt a person really has to answer is told apart', r.sessions[asked].waitingConfirmed, true);
+  check('  …from a permission request Claude Code approves by itself', r.sessions[auto].waitingConfirmed, false);
+}
+
+// --------------------------------------- Claude Code's own auto-compact point
+
+{
+  const home = newHome();
+  check('no settings.json → Claude Code decides, and that is what is reported',
+    scan(home).autoCompact, { window: null, models: {}, env: null, off: false });
+}
+
+{
+  const home = newHome();
+  writeSettings(home, {
+    autoCompactWindow: 250000,
+    modelSettings: {
+      'claude-opus-5-5': { effortLevel: 'xhigh', autoCompactWindow: 'auto' },
+      'claude-fable-5-1': { autoCompactWindow: 150000 },
+      'claude-opus-5': { effortLevel: 'xhigh' },
+      'claude-sonnet-5-5': { autoCompactWindow: 5 },
+    },
+  });
+  const a = scan(home).autoCompact;
+  check('a top-level auto-compact window is read', a.window, 250000);
+  check('  …with the models that have an entry of their own, which beats it',
+    a.models, { 'claude-opus-5-5': 'auto', 'claude-fable-5-1': 150000 });
+}
+
+{
+  // Claude Code ignores these without a word, so they are not "set".
+  const home = newHome();
+  const got = [50000, '250000', 250000.5, 2000000, null].map((v) => {
+    writeSettings(home, { autoCompactWindow: v });
+    return scan(home).autoCompact.window;
+  });
+  check('a window Claude Code would ignore is not reported as set', got, [null, null, null, null, null]);
+}
+
+{
+  const home = newHome();
+  writeSettings(home, { autoCompactWindow: 250000, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '400000' } });
+  check('the environment variable that overrides the setting is reported', scan(home).autoCompact.env, '400000');
+}
+
+{
+  const home = newHome();
+  writeSettings(home, { autoCompactWindow: 250000, autoCompactEnabled: false });
+  check('auto-compact switched off in settings.json is reported', scan(home).autoCompact.off, true);
+  writeSettings(home, { autoCompactWindow: 250000 });
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ autoCompactEnabled: false }));
+  check('  …and when it is switched off in ~/.claude.json instead', scan(home).autoCompact.off, true);
+}
+
+{
+  const home = newHome();
+  writeSettings(home, '{ this is not json');
+  check('a settings.json that cannot be parsed is not fatal',
+    scan(home).autoCompact, { window: null, models: {}, env: null, off: false });
+}
+
+// When to have Claude Code fetch a new reading. The app and the extension act
+// on `check.due` by running `claude -p /usage`, so a wrong answer here is
+// either a figure left two days stale or a process started every minute.
+{
+  const now = Date.now();
+  const HOUR = 60 * MIN;
+  const spend = (home, at) => writeSession(home, 'chk', '/tmp/chk', [assistant(at, usage(10, 0, 50000, 2000))], 'done');
+  const asked = (home, value) => fs.writeFileSync(path.join(home, '.claude', 'claude-pulse', 'usage-ask.json'),
+    typeof value === 'string' ? value : JSON.stringify({ at: value }));
+  const answer = (home) => { const c = scan(home).check; return [c.due, c.failed]; };
+
+  let home = newHome();
+  writeConfig(home, FRESH(now), now - 5 * MIN);
+  spend(home, now - 2 * MIN);
+  check('a reading five minutes old is not asked for again', scan(home).check.due, false);
+
+  home = newHome();
+  writeConfig(home, FRESH(now), now - 25 * MIN);
+  spend(home, now - 10 * MIN);
+  check('aged out, with tokens spent since → ask Claude Code for a new one', scan(home).check.due, true);
+  asked(home, now - 25 * MIN - 5000);
+  check('  …an ask that was answered does not hold the next one back', answer(home), [true, false]);
+  asked(home, now + 3 * 24 * HOUR);
+  check('  …nor does a stamp from the future, which is a changed clock', scan(home).check.due, true);
+  asked(home, '{ not json');
+  check('  …nor one that cannot be read', scan(home).check.due, true);
+
+  home = newHome();
+  writeConfig(home, FRESH(now), now - 25 * MIN);
+  spend(home, now - 40 * MIN);
+  check('aged out, but nothing spent since → an idle account is not polled', scan(home).check.due, false);
+
+  home = newHome();
+  writeConfig(home, FRESH(now), now - 4 * HOUR);
+  spend(home, now - 10 * MIN);
+  asked(home, Date.now() - 10 * 1000);
+  check('asked ten seconds ago → not again, and not yet called a failure', answer(home), [false, false]);
+  asked(home, now - 30 * MIN);
+  check('asked half an hour ago and the reading never moved → failed, no retry yet', answer(home), [false, true]);
+  asked(home, now - 3 * HOUR);
+  check('  …and tried again once two hours have gone by', answer(home), [true, true]);
+
+  home = newHome();
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ numStartups: 3 }));
+  spend(home, now - 10 * MIN);
+  check('an API-key install has no plan usage to fetch, and is never asked', scan(home).check.due, false);
+
+  home = newHome();
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'nobody@example.com' } }));
+  check('signed in, never read, nothing spent → nothing to ask about yet', scan(home).check.due, false);
+  spend(home, now - 10 * MIN);
+  check('  …and once something is spent, the first reading is asked for', scan(home).check.due, true);
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
 process.exit(fail ? 1 : 0);

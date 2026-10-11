@@ -93,10 +93,51 @@ struct SessionContext {
     var compactTrigger: String?
     var preTokens: Int?
     var updatedAt: Double
+    /// When the newest reply was written, which is what the clock below runs
+    /// from. 0 = no reply measured yet.
+    var repliedAt: Double = 0
+    /// When this conversation stops being cheap to come back to: the server
+    /// keeps it ready for a while after each reply, and past this the next
+    /// message reloads all of it at full price. 0 = the transcript does not
+    /// say how long, so nothing is claimed.
+    var cacheExpiresAt: Double = 0
+    /// How many ordinary replies that reload costs here. nil until there are
+    /// enough recent replies to say what ordinary is.
+    var reloadTimes: Double? = nil
+    /// A question or a permission prompt that a person really has to answer —
+    /// not one Claude Code approved by itself a moment later.
+    var waitingOnUser = false
 
     /// Rounded once, here, so the banner and the menu cannot disagree about
     /// the same measurement by a point.
     var contextSharePct: Int { Int((contextShare * 100).rounded()) }
+
+    /// Its turn is over and nothing is running: the next move is the user's.
+    var finished: Bool { state == "done" || state == "idle" || state == "error" }
+}
+
+/// Claude Code's own ceiling on a conversation — its `autoCompactWindow`
+/// setting, as limits-scan.js read it from ~/.claude/settings.json.
+struct AutoCompactState {
+    /// The top-level window. nil = Claude Code decides, which on a 1M-context
+    /// model means waiting until the conversation is nearly a million tokens.
+    var window: Int? = nil
+    /// Models with an entry of their own, which beats the top-level one.
+    /// A nil window is "auto".
+    var models: [(name: String, window: Int?)] = []
+    /// CLAUDE_CODE_AUTO_COMPACT_WINDOW in settings.json, which beats both.
+    var env: String? = nil
+    /// Auto-compact switched off altogether in Claude Code's /config.
+    var off = false
+
+    /// Models left compacting later than the top-level window asks for.
+    var loose: [(name: String, window: Int?)] {
+        guard let top = window else { return [] }
+        return models.filter { ($0.window ?? Int.max) > top }
+    }
+
+    /// Whether every model compacts by `tokens`.
+    func holds(_ tokens: Int) -> Bool { window == tokens && loose.isEmpty }
 }
 
 struct LimitReport {
@@ -110,6 +151,12 @@ struct LimitReport {
     var breakdown: [(label: String, percent: Int)] = []
     var creditsEnabled = false
     var sessions: [SessionContext] = []
+    var autoCompact = AutoCompactState()
+    /// The reading has aged out and something has been spent since: worth
+    /// having Claude Code fetch a new one.
+    var checkDue = false
+    /// The last time that was tried, no new reading came back.
+    var checkFailed = false
 
     var weekly: LimitWindow? { windows.first { $0.key == "weekly" } }
     var session: LimitWindow? { windows.first { $0.key == "session" } }
@@ -130,6 +177,7 @@ final class LimitReader {
     private(set) var failures = 0
     var failing: Bool { failures >= 3 }
     private var busy = false
+    private var queued: [() -> Void] = []
     private let script: String?
     private let runner: String?
 
@@ -142,7 +190,12 @@ final class LimitReader {
     var available: Bool { script != nil && runner != nil }
 
     func refresh(_ done: @escaping () -> Void) {
-        guard !busy, let script, let runner else { return }
+        guard let script, let runner else { return }
+        // A scan already under way may have read the files before whatever
+        // prompted this call changed them, so it cannot stand in for it: run
+        // once more when it finishes, however many callers asked meanwhile.
+        // Capped, so a scan that never returns cannot collect callers for ever.
+        guard !busy else { if queued.count < 4 { queued.append(done) }; return }
         busy = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let p = Process()
@@ -174,6 +227,11 @@ final class LimitReader {
                 if why == nil { self?.failures = 0 } else { self?.failures += 1 }
                 self?.busy = false
                 done()
+                if let me = self, !me.queued.isEmpty {
+                    let waiting = me.queued
+                    me.queued = []
+                    me.refresh { waiting.forEach { $0() } }
+                }
             }
         }
     }
@@ -240,9 +298,28 @@ final class LimitReader {
                 compactedAt: (v["compactedAt"] as? Double) ?? 0,
                 compactTrigger: v["compactTrigger"] as? String,
                 preTokens: (v["preTokens"] as? Double).map { Int($0) },
-                updatedAt: (v["updatedAt"] as? Double) ?? 0))
+                updatedAt: (v["updatedAt"] as? Double) ?? 0,
+                repliedAt: (v["at"] as? Double) ?? 0,
+                cacheExpiresAt: (v["cacheExpiresAt"] as? Double) ?? 0,
+                reloadTimes: v["reloadTimes"] as? Double,
+                waitingOnUser: (v["waitingConfirmed"] as? Bool) ?? false))
         }
         r.sessions.sort { $0.ctx > $1.ctx }
+
+        if let a = obj["autoCompact"] as? [String: Any] {
+            r.autoCompact.window = (a["window"] as? Double).map { Int($0) }
+            // A model's entry is a number or the word "auto".
+            for (name, v) in (a["models"] as? [String: Any]) ?? [:] {
+                r.autoCompact.models.append((name, (v as? Double).map { Int($0) }))
+            }
+            r.autoCompact.models.sort { $0.name < $1.name }
+            r.autoCompact.env = a["env"] as? String
+            r.autoCompact.off = (a["off"] as? Bool) ?? false
+        }
+        if let c = obj["check"] as? [String: Any] {
+            r.checkDue = (c["due"] as? Bool) ?? false
+            r.checkFailed = (c["failed"] as? Bool) ?? false
+        }
         return r
     }
 }
@@ -262,8 +339,26 @@ struct LimitPolicy {
     /// Context size at which re-reading the conversation dominates a turn.
     var contextWarn = 300_000
     var contextShareMin = 0.55
+    /// Context size at which coming back to a conversation that has gone cold
+    /// costs enough to be worth a word beforehand. Lower than `contextWarn`:
+    /// one reload is the whole context at full price, where an ordinary reply
+    /// re-reads it for a tenth.
+    var awayWarn = 200_000
+    /// How long before that to say so: long enough to act on, short enough
+    /// that most pauses never reach it.
+    var awayLeadMs: Double = 15 * 60_000
     var alertsEnabled = true
     var contextNudge = true
+    var awayNudge = true
+    /// Have Claude Code fetch a new usage reading when the one it holds has
+    /// aged out. Every warning above is only as good as that reading.
+    var autoCheck = true
+
+    /// Where to move Claude Code's own auto-compact point. The first is the
+    /// one offered by name: replayed over a real week it made the main
+    /// conversations 46% cheaper, against 37% for the second, which compacts
+    /// about half as often.
+    static let compactPresets = [250_000, 400_000]
 
     static func load() -> LimitPolicy {
         var p = LimitPolicy()
@@ -283,8 +378,14 @@ struct LimitPolicy {
             let v = d.integer(forKey: "contextWarnTokens")
             if v >= 20_000 { p.contextWarn = v }
         }
+        if d.object(forKey: "awayWarnTokens") != nil {
+            let v = d.integer(forKey: "awayWarnTokens")
+            if v >= 20_000 { p.awayWarn = v }
+        }
         if d.object(forKey: "limitAlerts") != nil { p.alertsEnabled = d.bool(forKey: "limitAlerts") }
         if d.object(forKey: "contextNudge") != nil { p.contextNudge = d.bool(forKey: "contextNudge") }
+        if d.object(forKey: "awayNudge") != nil { p.awayNudge = d.bool(forKey: "awayNudge") }
+        if d.object(forKey: "usageAutoCheck") != nil { p.autoCheck = d.bool(forKey: "usageAutoCheck") }
         return p
     }
 
@@ -355,6 +456,36 @@ struct LimitPolicy {
                 && now - $0.compactedAt > 5 * 60_000          // just compacted: give it a moment
         }
     }
+
+    /// Large conversations left alone long enough that they are about to stop
+    /// being cheap to come back to — while there is still time to do
+    /// something about it. Once the moment has passed there is nothing left
+    /// to say: compacting a cold conversation has to load all of it first, so
+    /// it costs the reload it was meant to avoid.
+    ///
+    /// Only where the next move is the user's. A session still working will
+    /// make its own next request whenever its tool finishes, and no reminder
+    /// changes when that is.
+    func goingCold(_ r: LimitReport, now: Double) -> [SessionContext] {
+        guard awayNudge else { return [] }
+        return r.sessions.filter {
+            $0.ctx >= awayWarn && ($0.finished || $0.waitingOnUser)
+                && $0.cacheExpiresAt > now && $0.cacheExpiresAt - now <= awayLeadMs
+                // The short five-minute cache is inside the lead time from
+                // the moment a reply lands, so this would fire after every
+                // single one. There is no pause worth warning about there.
+                && $0.cacheExpiresAt - $0.repliedAt >= 2 * awayLeadMs
+        }
+    }
+
+    /// Whether anyone has touched this Mac lately. A reminder to act in the
+    /// next fifteen minutes is no use to an empty desk — and worse than none
+    /// if it is still there, long out of date, when its owner gets back.
+    static func userIsHere(within seconds: Double = 240) -> Bool {
+        // Every input event type at once; the constant has no Swift name.
+        guard let any = CGEventType(rawValue: ~0) else { return true }
+        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: any) < seconds
+    }
 }
 
 // MARK: - Words
@@ -386,6 +517,14 @@ enum LimitFmt {
         if cal.isDateInTomorrow(date) { f.dateFormat = "h:mm a"; return "tomorrow " + f.string(from: date) }
         f.dateFormat = "EEE h:mm a"
         return f.string(from: date)
+    }
+
+    /// "3:42 PM" — for a moment minutes away, where "today" adds nothing.
+    static func time(_ msAt: Double) -> String {
+        let f = DateFormatter()
+        f.locale = .current
+        f.dateFormat = "h:mm a"
+        return f.string(from: Date(timeIntervalSince1970: msAt / 1000))
     }
 
     static func tokens(_ n: Int) -> String {

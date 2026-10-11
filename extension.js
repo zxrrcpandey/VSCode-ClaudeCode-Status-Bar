@@ -20,9 +20,23 @@ let usageBusy = false;
 let limitsData = null;
 let limitsPoll = null;
 let limitsBusy = false;
+let limitsQueued = [];
+// Who is waiting on a usage check that is running; null when none is.
+let usageWaiters = null;
 let buddy = null;
 let lastBuddyData = null;
 let gitName = '';
+// Idle-chat reminders already given, one per pause, and chats the user said
+// not to be reminded about. In memory: a reload forgetting them costs one
+// repeated reminder at most.
+const awaySaid = new Set();
+const awayMuted = {};
+// How long before a conversation goes cold to say so — long enough to act on,
+// short enough that most pauses never reach it. The same lead the macOS app uses.
+const AWAY_LEAD_MS = 15 * 60 * 1000;
+// Where Claude Code's own auto-compact point can be moved to. The first is the
+// one offered by name; see scripts/set-autocompact.js for where it comes from.
+const COMPACT_PRESETS = [250000, 400000];
 const CHARACTERS = ['critter', 'robot', 'cat', 'pup', 'turtle', 'snail', 'bee', 'dragon', 'ghost'];
 
 // The buddy addresses the user by name: claudePulse.buddyName wins, otherwise
@@ -148,6 +162,16 @@ function buddyUsage() {
       until: worst.w.resetsAt ? untilText(worst.w.resetsAt) : '',
     };
   }
+  const cold = cfg.remarks ? goingCold(Date.now())[0] : null;
+  if (cold) {
+    return {
+      kind: 'away', tier: 2, ctx: fmtTok(cold.ctx), project: cold.project,
+      by: clockText(cold.cacheExpiresAt), waiting: !!cold.waitingConfirmed,
+      // Said once per pause rather than once ever: the character keys what it
+      // has already said on this.
+      id: cold.id + ':' + Math.floor(cold.cacheExpiresAt / 60000),
+    };
+  }
   const big = Object.keys(limitsData.sessions || {})
     .map((k) => limitsData.sessions[k])
     .filter((x) => x.ctx >= cfg.contextWarn && x.turn && x.turn.contextShare >= 0.55)
@@ -186,8 +210,15 @@ function postBuddy(s, st, now) {
 // already caches in ~/.claude.json and dead-reckons it forward from the
 // transcripts; the macOS app runs the very same script. Child process, like
 // the usage scan, so a slow disk can never stall the editor.
-function refreshLimits() {
-  if (limitsBusy) return;
+function refreshLimits(then) {
+  // Timers call this with nothing; only a caller that needs the result of a
+  // scan taken after its own change passes a function.
+  const after = typeof then === 'function' ? then : null;
+  if (limitsBusy) {
+    // The scan under way may have read the files before that change.
+    if (after && limitsQueued.length < 4) limitsQueued.push(after);
+    return;
+  }
   limitsBusy = true;
   cp.execFile(process.execPath, [path.join(__dirname, 'limits-scan.js')], {
     env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }),
@@ -195,8 +226,216 @@ function refreshLimits() {
     timeout: 30000,
   }, (err, stdout) => {
     limitsBusy = false;
-    if (err || !stdout) return;
-    try { limitsData = JSON.parse(stdout); render(); } catch { /* keep last data */ }
+    if (!err && stdout) {
+      try { limitsData = JSON.parse(stdout); render(); } catch { /* keep last data */ }
+      maybeRemindAway();
+      maybeCheckUsage();
+    }
+    if (after) after();
+    if (limitsQueued.length) {
+      const waiting = limitsQueued;
+      limitsQueued = [];
+      refreshLimits(() => waiting.forEach((f) => f()));
+    }
+  });
+}
+
+/* Every usage figure here starts from the reading Claude Code last fetched,
+ * and left to itself it fetches rarely: two days old has been seen, with the
+ * week at 8% on screen and 24% in fact. So once the scan says the reading has
+ * aged out and tokens have been spent since, have Claude Code fetch a new one.
+ * `claude -p /usage` is answered by Claude Code itself — nothing goes to a
+ * model and it costs no tokens. Mirrors PulseSetup.checkUsage() in
+ * macos/Setup.swift.
+ *
+ * -p answers and exits. The rest keeps a background check from behaving like
+ * somebody opening Claude Code: no transcript, no MCP servers, and none of the
+ * user's hooks — a SessionStart hook of theirs has no business firing for
+ * this, and Pulse's own would put a phantom session in the status bar. */
+const USAGE_ARGS = ['-p', '/usage', '--no-session-persistence', '--setting-sources', 'project',
+  '--strict-mcp-config', '--settings', '{"disableAllHooks":true}'];
+const ASK_STAMP = path.join(os.homedir(), '.claude', 'claude-pulse', 'usage-ask.json');
+
+/* The Claude Code inside its own extension is always recent enough to answer
+ * /usage without a terminal. A `claude` installed long ago is not — 2.1.69
+ * replies "Unknown skill" — so that is only the fallback. */
+function claudeBinary() {
+  const ext = vscode.extensions.getExtension('anthropic.claude-code');
+  if (ext) {
+    const exe = path.join(ext.extensionPath, 'resources', 'native-binary',
+      process.platform === 'win32' ? 'claude.exe' : 'claude');
+    if (fs.existsSync(exe)) return exe;
+  }
+  return 'claude';
+}
+
+/* When Claude Code last fetched the usage figures, by its own record. */
+function usageFetchedAt(cb) {
+  fs.readFile(path.join(os.homedir(), '.claude.json'), 'utf8', (err, text) => {
+    let at = 0;
+    try { at = Number(JSON.parse(text).cachedUsageUtilization.fetchedAtMs) || 0; } catch { /* no reading yet */ }
+    cb(at);
+  });
+}
+
+/* Claude Code makes a project folder for wherever it is started, even for
+ * this: an empty one named after the temporary folder, with an empty `memory`
+ * inside. Take it away again — with rmdir, so that anything which has ever
+ * been put in there stays. */
+function tidyUsageProject() {
+  const projects = path.join(os.homedir(), '.claude', 'projects');
+  let names = [];
+  try { names = fs.readdirSync(projects); } catch { return; }
+  for (const name of names) {
+    if (!name.endsWith('-claude-pulse-usage')) continue;
+    for (const dir of [path.join(projects, name, 'memory'), path.join(projects, name)]) {
+      try { fs.rmdirSync(dir); } catch { /* not empty, or already gone */ }
+    }
+  }
+}
+
+function checkUsage(done) {
+  // One already running: share its answer rather than start a second.
+  if (usageWaiters) { if (done) usageWaiters.push(done); return; }
+  usageWaiters = done ? [done] : [];
+  // Recorded before asking, where the scan reads it. That is what stops the
+  // other windows, and the macOS app, from all asking in the same minute.
+  try {
+    fs.mkdirSync(path.dirname(ASK_STAMP), { recursive: true });
+    fs.writeFileSync(ASK_STAMP, JSON.stringify({ at: Date.now() }));
+  } catch { /* then another window may ask too, which costs one process */ }
+  const finish = (ok, said) => {
+    const waiting = usageWaiters || [];
+    usageWaiters = null;
+    refreshLimits(() => waiting.forEach((f) => f(ok, said)));
+  };
+  usageFetchedAt((before) => {
+    // Somewhere that is nobody's project, so there are no project settings,
+    // instructions or memory to pick up along the way.
+    const cwd = path.join(os.tmpdir(), 'claude-pulse-usage');
+    try { fs.mkdirSync(cwd, { recursive: true }); } catch { /* execFile will say so */ }
+    const env = Object.assign({}, process.env, { DISABLE_AUTOUPDATER: '1' });
+    // Started from inside a Claude Code session it would refuse, as a nested one.
+    delete env.CLAUDECODE;
+    delete env.CLAUDE_CODE_ENTRYPOINT;
+    const child = cp.execFile(claudeBinary(), USAGE_ARGS, { cwd, env, timeout: 45000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => {
+        tidyUsageProject();
+        usageFetchedAt((after) => {
+          // The only proof that counts: the cache the scan reads has moved.
+          if (after > before) finish(true, '');
+          else finish(false, firstError(String(stdout || '') + '\n' + String(stderr || ''), err));
+        });
+      });
+    // With stdin left open it waits three seconds for input first.
+    if (child.stdin) {
+      child.stdin.on('error', () => { /* it never started; the callback says why */ });
+      child.stdin.end();
+    }
+  });
+}
+
+function maybeCheckUsage() {
+  if (!limitsData || !limitsData.check || !limitsData.check.due) return;
+  const cfg = limitSettings();
+  if (!cfg.show || !cfg.keepFresh) return;
+  const ask = () => {
+    // Windows restored together scan in step, and would each have seen "due"
+    // before any of them had written the stamp.
+    try {
+      if (Date.now() - Number(JSON.parse(fs.readFileSync(ASK_STAMP, 'utf8')).at) < 60000) return;
+    } catch { /* never asked */ }
+    checkUsage();
+  };
+  if (process.platform !== 'darwin') { ask(); return; }
+  // Where the macOS app is running it does this itself.
+  cp.execFile('pgrep', ['-x', 'ClaudePulse'], { timeout: 3000 }, (err, stdout) => {
+    if (err || !String(stdout).trim()) ask();
+  });
+}
+
+/* Large conversations in this window, left alone long enough that they are
+ * about to stop being cheap to come back to — while there is still time to do
+ * something about it. Mirrors LimitPolicy.goingCold() in macos/Limits.swift.
+ *
+ * The server keeps a conversation ready for a while after each reply; once
+ * that runs out, the next message loads all of it again at full price. Past
+ * that point there is nothing useful left to say, because compacting a cold
+ * conversation has to load it first. */
+function goingCold(now) {
+  if (!limitsData) return [];
+  const cfg = limitSettings();
+  if (!cfg.show || !cfg.awayReminder) return [];
+  const live = {};
+  for (const s of sessions) if (s.session_id) live[s.session_id] = s;
+  return Object.keys(limitsData.sessions || {})
+    .map((id) => Object.assign({ id }, limitsData.sessions[id]))
+    .filter((s) => {
+      const cur = live[s.id];
+      // The state file is read every two seconds, the transcript once a
+      // minute. If the session has moved since the scan, the deadline here
+      // belongs to a reply that is no longer the newest: wait for the next.
+      if (!cur || (cur.updated_at || 0) > limitsData.at) return false;
+      // Only where the next move is the user's. A session still working makes
+      // its own next request whenever its tool finishes.
+      const yours = cur.state === 'done' || cur.state === 'idle' || cur.state === 'error'
+        || (cur.state === 'waiting' && cur.waiting_confirmed === true);
+      return yours && s.ctx >= cfg.awayWarn && (awayMuted[s.id] || 0) < now
+        && s.cacheExpiresAt > now && s.cacheExpiresAt - now <= AWAY_LEAD_MS
+        // The short five-minute cache is inside the lead time from the moment
+        // a reply lands, so this would fire after every single one.
+        && s.cacheExpiresAt - s.at >= 2 * AWAY_LEAD_MS;
+    })
+    .sort((a, b) => b.ctx - a.ctx);
+}
+
+/* Whether a conversation is still cheap to come back to, in words. Empty when
+ * the transcript does not say, or the session is busy. */
+function cacheLine(s, now) {
+  if (!(s.cacheExpiresAt > 0)) return '';
+  if (!(s.state === 'done' || s.state === 'idle' || s.state === 'error' || s.waitingConfirmed)) return '';
+  const at = clockText(s.cacheExpiresAt);
+  return s.cacheExpiresAt > now
+    ? 'Cheap to continue until ' + at + ' — then the next message reloads all of it.'
+    // Compacting now would have to load it all first, so that is no longer
+    // the advice. What is still free is not coming back at all.
+    : 'Gone cold at ' + at + ' — the next message reloads all of it. Done with it? Start a new chat.';
+}
+
+/* One reminder per pause, and only to someone looking at this window: fifteen
+ * minutes' notice is no use to an empty desk. Where the macOS app is running
+ * it puts this on the screen itself, so saying it here too would be twice. */
+function maybeRemindAway() {
+  if (!vscode.window.state.focused) return;
+  const now = Date.now();
+  const s = goingCold(now).find((x) => !awaySaid.has(x.id + ':' + Math.floor(x.cacheExpiresAt / 60000)));
+  if (!s) return;
+  awaySaid.add(s.id + ':' + Math.floor(s.cacheExpiresAt / 60000));
+  const say = () => {
+    const by = clockText(s.cacheExpiresAt);
+    const times = typeof s.reloadTimes === 'number' && s.reloadTimes >= 2
+      ? ' — about what ' + Math.round(s.reloadTimes) + ' ordinary replies there cost' : '';
+    const reload = ' holds ' + fmtTok(s.ctx) + ' tokens, and after ' + by
+      + ' the next message there loads all of it again at full price' + times + '.';
+    const mute = 'Not this chat';
+    if (s.waitingConfirmed) {
+      vscode.window.showWarningMessage(
+        'Claude Pulse: ' + s.project + ' is waiting for your answer. It' + reload + ' Answering before then avoids it.',
+        mute).then((c) => { if (c === mute) awayMuted[s.id] = Date.now() + 12 * 3600000; });
+      return;
+    }
+    const copy = 'Copy /compact';
+    vscode.window.showWarningMessage(
+      'Claude Pulse: stepping away? ' + s.project + reload
+        + ' Coming back to it later? Type /compact there now. Finished with it? Nothing to do.',
+      copy, mute).then((c) => {
+      if (c === copy) vscode.env.clipboard.writeText('/compact');
+      if (c === mute) awayMuted[s.id] = Date.now() + 12 * 3600000;
+    });
+  };
+  if (process.platform !== 'darwin') { say(); return; }
+  cp.execFile('pgrep', ['-x', 'ClaudePulse'], { timeout: 3000 }, (err, stdout) => {
+    if (err || !String(stdout).trim()) say();
   });
 }
 
@@ -240,6 +479,11 @@ function limitSettings() {
     // of switching off the chatty one.
     remarks: cfg.get('buddyUsageRemarks') !== false,
     contextWarn: n('contextWarnTokens', 300000, 20000, Number.MAX_SAFE_INTEGER),
+    awayReminder: cfg.get('awayReminder') !== false,
+    keepFresh: cfg.get('keepUsageFresh') !== false,
+    // Lower than contextWarn: one reload is the whole context at full price,
+    // where an ordinary reply re-reads it for a tenth.
+    awayWarn: n('awayWarnTokens', 200000, 20000, Number.MAX_SAFE_INTEGER),
     weekly: { watch: Math.max(1, weeklyWarn - 25), warn: weeklyWarn, critical: Math.min(100, weeklyWarn + 15) },
     session: { watch: Math.max(1, sessionWarn - 18), warn: sessionWarn, critical: Math.min(100, sessionWarn + 8) },
   };
@@ -317,6 +561,28 @@ function spanText(ms) {
 }
 function untilText(msAt) { return spanText(msAt - Date.now()); }
 function agoText(ms) { return spanText(ms); }
+/* "3:42 PM" — a deadline minutes away reads better as a time than a countdown
+ * that is out of date by the time it has been read. */
+function clockText(msAt) {
+  return new Date(msAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+/* Claude Code's auto-compact point, in words. `ac` is what limits-scan.js read
+ * from ~/.claude/settings.json; a model's own entry beats the top-level one,
+ * so one left compacting later than it means the setting is not in force
+ * everywhere. */
+function autoCompactLoose(ac) {
+  if (!ac || typeof ac.window !== 'number') return [];
+  return Object.keys(ac.models || {}).filter((m) => ac.models[m] === 'auto' || ac.models[m] > ac.window);
+}
+function autoCompactText(ac) {
+  if (!ac) return '';
+  if (ac.env) return 'fixed by CLAUDE_CODE_AUTO_COMPACT_WINDOW (' + ac.env + ')';
+  if (ac.off) return 'switched off in Claude Code — turn it on in /config';
+  if (typeof ac.window !== 'number') return "Claude Code's default — waits until the model is full";
+  const loose = autoCompactLoose(ac);
+  return 'at ' + fmtTok(ac.window) + (loose.length ? ' — except ' + loose.map(shortModel).join(', ') : '');
+}
 
 // Token usage comes from Claude Code's own transcript files — exact and
 // local. The scan runs in a child process so it can never block the UI.
@@ -563,6 +829,13 @@ function limitTooltip(tip) {
         ? share + '% of the cost of its last ' + turns + ' replies was re-reading it.'
         : share + '% of its latest reply was re-reading it.') +
       (big.ctx >= cfg.contextWarn ? ' `/compact` makes the next ones much cheaper.' : '') + '\n');
+    const cache = cacheLine(big, Date.now());
+    if (cache) tip.appendMarkdown('\n' + cache + '\n');
+    // Past where compacting pays, with nothing set to do it: name the switch.
+    const ac = limitsData.autoCompact;
+    if (ac && typeof ac.window !== 'number' && !ac.env && !ac.off && big.ctx >= COMPACT_PRESETS[0]) {
+      tip.appendMarkdown('\n_Nothing compacts this by itself yet — run_ **Claude Pulse: Compact Conversations Automatically**.\n');
+    }
   }
   if (limitsData.stale && limitsData.ageMs) {
     tip.appendMarkdown('\n_Claude Code last checked this ' + agoText(limitsData.ageMs) + ' ago._');
@@ -588,6 +861,12 @@ function render() {
       badge = ' · ' + (worst.tier >= 2 ? '$(warning) ' : '')
         + windowTag(worst.w) + ' ' + windowShownText(worst.w);
     }
+  }
+  // A chat about to go cold says so here for the few minutes it matters, with
+  // the time it ends rather than a countdown. Quiet: it borrows no colour.
+  const cold = goingCold(now)[0];
+  if (cold && !(worst && worst.blocked)) {
+    badge += ' · $(watch) ' + (cold.waitingConfirmed ? 'answer' : '/compact') + ' by ' + clockText(cold.cacheExpiresAt);
   }
 
   if (sessions.length === 0) {
@@ -653,9 +932,9 @@ function render() {
     item.text += badge;
     // "Claude needs input" already owns the colour when it is showing — that
     // is the more urgent thing. Otherwise the limit tier gets to set it.
-    if (!item.backgroundColor && worst.tier >= 3) {
+    if (!item.backgroundColor && worst && worst.tier >= 3) {
       item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    } else if (!item.backgroundColor && worst.tier >= 2) {
+    } else if (!item.backgroundColor && worst && worst.tier >= 2) {
       item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     }
   }
@@ -923,6 +1202,14 @@ function activate(context) {
             label: s.project + ' — ' + fmtTok(s.ctx) + ' context',
             description: (s.turn ? share + '% of ' + (turns >= 3 ? 'its last ' + turns + ' replies' : 'its latest reply') : 'just compacted') +
               (s.ctx >= limitSettings().contextWarn ? ' · worth running /compact' : ''),
+            detail: cacheLine(s, Date.now()) || undefined,
+          });
+        }
+        if (limitsData.autoCompact) {
+          items.push({
+            label: '$(fold) Compacts by itself',
+            description: autoCompactText(limitsData.autoCompact),
+            detail: 'Change it with “Claude Pulse: Compact Conversations Automatically”',
           });
         }
       } else {
@@ -982,6 +1269,86 @@ function activate(context) {
           void stdout;
         });
     })
+  );
+
+  // The warnings ask; this acts. Claude Code compacts by itself only once the
+  // model is full — about a million tokens on a 1M-context model — and its own
+  // autoCompactWindow setting moves that to where it pays. A choice rather
+  // than a switch, because `/autocompact` inside Claude Code edits the same
+  // setting and whatever is in force has to be the one shown as chosen.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudePulse.autoCompact', async () => {
+      const ac = (limitsData && limitsData.autoCompact) || null;
+      if (ac && ac.env) {
+        vscode.window.showWarningMessage('Claude Pulse: CLAUDE_CODE_AUTO_COMPACT_WINDOW is set to ' + ac.env
+          + ' in ~/.claude/settings.json, and Claude Code uses that instead of this setting. Change it there.');
+        return;
+      }
+      const cur = ac && typeof ac.window === 'number' ? ac.window : 0;
+      const whole = ac && autoCompactLoose(ac).length === 0;
+      const mark = (tokens) => (ac && cur === tokens && (tokens === 0 || whole) ? '$(check) ' : '');
+      const sizes = COMPACT_PRESETS.concat(cur && COMPACT_PRESETS.indexOf(cur) < 0 ? [cur] : []);
+      const picks = sizes.map((tokens, n) => ({
+        label: mark(tokens) + 'At ' + fmtTok(tokens),
+        description: n === 0 ? 'recommended — replayed over a real week, the main conversations cost 46% less'
+          : n === 1 ? 'compacts less often, saves less' : 'set in Claude Code',
+        tokens,
+      }));
+      picks.push({
+        label: mark(0) + "Claude Code's default",
+        description: 'waits until the model is full — about a million tokens on a 1M-context model',
+        tokens: 0,
+      });
+      const chosen = await vscode.window.showQuickPick(picks, {
+        placeHolder: 'When should Claude Code compact a conversation by itself?'
+          + (ac ? '  Now: ' + autoCompactText(ac) : ''),
+      });
+      if (!chosen) return;
+      // The row already in force: nothing to change.
+      if (ac && cur === chosen.tokens && (chosen.tokens === 0 || whole)) return;
+      cp.execFile(process.execPath,
+        [path.join(__dirname, 'scripts', 'set-autocompact.js')]
+          .concat(chosen.tokens ? ['--tokens', String(chosen.tokens)] : ['--remove']),
+        { env: Object.assign({}, process.env, { ELECTRON_RUN_AS_NODE: '1' }), timeout: 20000 },
+        (err, stdout, stderr) => {
+          if (err) {
+            vscode.window.showErrorMessage('Claude Pulse: ' + firstError(stderr, err));
+            return;
+          }
+          // The script's own asides — a model that had a setting of its own,
+          // auto-compact being switched off — are worth passing on.
+          const asides = String(stdout).split('\n').map((l) => l.trim())
+            .filter((l) => l.indexOf('Note:') === 0 || l.indexOf('had its own setting') >= 0 || l.indexOf('Put back') === 0);
+          vscode.window.showInformationMessage((chosen.tokens
+            ? 'Claude Pulse: Claude Code will now compact a conversation by itself at ' + fmtTok(chosen.tokens)
+              + ' tokens. Conversations already open pick it up when they are next started.'
+            : "Claude Pulse: back to Claude Code's default — it decides when to compact again.")
+            + (asides.length ? ' ' + asides.join(' ') : ''));
+          refreshLimits();
+        });
+    })
+  );
+
+  // What Pulse does by itself once the reading has aged out, on demand.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudePulse.checkUsage', () => {
+      vscode.window.setStatusBarMessage('Claude Pulse: asking Claude Code for your usage…', 6000);
+      checkUsage((ok, said) => {
+        if (!ok) {
+          vscode.window.showWarningMessage('Claude Pulse: could not get a fresh usage reading'
+            + (said ? ' — ' + said : '') + '. Typing /usage in Claude Code does the same thing.');
+          return;
+        }
+        const now = ((limitsData && limitsData.windows) || []).map((w) => w.label + ' ' + w.percent + '%');
+        vscode.window.showInformationMessage('Claude Pulse: usage is up to date'
+          + (now.length ? ' — ' + now.join(' · ') : '') + '.');
+      });
+    })
+  );
+
+  // Coming back to the window is the moment a reminder can be acted on.
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((e) => { if (e.focused) maybeRemindAway(); })
   );
 
   context.subscriptions.push(

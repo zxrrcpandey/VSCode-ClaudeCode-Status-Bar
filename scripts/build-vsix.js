@@ -19,7 +19,7 @@ const FILES = ['package.json', 'extension.js', 'usage-scan.js', 'limits-scan.js'
 // hooks/ ships too: the extension keeps the installed hook in sync with it.
 const DIRS = ['media', 'hooks'];
 // Only the scripts the extension itself runs — not the build tooling.
-const SCRIPTS = ['install-statusline.js'];
+const SCRIPTS = ['install-statusline.js', 'set-autocompact.js'];
 
 const build = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-pulse-vsix-'));
 const ext = path.join(build, 'extension');

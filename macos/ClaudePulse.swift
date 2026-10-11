@@ -324,6 +324,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let limits = LimitReader()
     let banner = AlertBanner()
     var policy = LimitPolicy.load()
+    /// Who is waiting on a usage check that is running; nil when none is.
+    var usageWaiters: [(Bool, String) -> Void]?
 
     private let spinner = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"]
 
@@ -352,6 +354,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let message = LoginItem.set(on)
             FileHandle.standardOutput.write(Data((message ?? (on ? "will open at login\n" : "will not open at login\n")).utf8))
             exit(message == nil ? 0 : 1)
+        }
+        // ClaudePulse --autocompact 250000 | default — the menu's "Compact Chats
+        // Automatically", for scripted installs.
+        if let i = args.firstIndex(of: "--autocompact") {
+            let value = i + 1 < args.count ? args[i + 1] : ""
+            guard value == "default" || Int(value) != nil else {
+                FileHandle.standardError.write(Data("usage: ClaudePulse --autocompact <tokens>|default\n".utf8))
+                exit(2)
+            }
+            let r = PulseSetup.setAutoCompact(Int(value))
+            FileHandle.standardOutput.write(Data(r.output.utf8))
+            exit(r.ok ? 0 : 1)
+        }
+        // ClaudePulse --check-usage — what the app does by itself once the
+        // usage reading has aged out, here so it can be tried from a terminal.
+        if args.contains("--check-usage") {
+            PulseSetup.markUsageAsked()
+            let r = PulseSetup.checkUsage()
+            FileHandle.standardOutput.write(Data(((r.ok ? "fresh reading, via " : "") + r.output + "\n").utf8))
+            exit(r.ok ? 0 : 1)
         }
         // Started twice (a LaunchAgent plus a click in Finder) would mean two
         // icons in the menu bar, both polling. Whichever copy gets the lock
@@ -414,11 +436,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// A finished limit scan may need to put a banner on the screen.
-    private func limitsDone() {
+    func limitsDone() {
         policy = LimitPolicy.load()
         render()
         if menuOpen { refreshOpenMenu() }
         evaluateAlerts()
+        askUsageIfDue()
     }
 
     private func refresh() {
@@ -826,7 +849,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         nudge.target = self
         nudge.state = policy.contextNudge ? .on : .off
         warnMenu.addItem(nudge)
+        let away = NSMenuItem(title: "Tell me before an idle chat gets expensive",
+                              action: #selector(toggleAwayNudge(_:)), keyEquivalent: "")
+        away.target = self
+        away.state = policy.awayNudge ? .on : .off
+        warnMenu.addItem(away)
+        let fresh = NSMenuItem(title: "Keep the usage figures up to date",
+                               action: #selector(toggleAutoCheck(_:)), keyEquivalent: "")
+        fresh.target = self
+        fresh.state = policy.autoCheck ? .on : .off
+        warnMenu.addItem(fresh)
         warnMenu.addItem(NSMenuItem.separator())
+        let checkNow = NSMenuItem(title: "Check Usage Now", action: #selector(checkUsageNow(_:)), keyEquivalent: "")
+        checkNow.target = self
+        warnMenu.addItem(checkNow)
         let quiet = NSMenuItem(title: "Quiet for 4 Hours", action: #selector(snoozeAllAlerts(_:)), keyEquivalent: "")
         quiet.target = self
         warnMenu.addItem(quiet)
@@ -834,8 +870,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                  action: #selector(testLimitBanner(_:)), keyEquivalent: "")
         preview.target = self
         warnMenu.addItem(preview)
+        let previewAway = NSMenuItem(title: "Show Me the Idle-Chat Reminder",
+                                     action: #selector(testAwayBanner(_:)), keyEquivalent: "")
+        previewAway.target = self
+        warnMenu.addItem(previewAway)
         warnItem.submenu = warnMenu
         menu.addItem(warnItem)
+
+        // Warnings ask; this one acts. Claude Code compacts by itself only
+        // once the model is full, and this moves that to where it pays.
+        menu.addItem(autoCompactMenuItem())
 
         let login = NSMenuItem(title: "Open at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
         login.target = self

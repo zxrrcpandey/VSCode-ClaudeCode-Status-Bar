@@ -808,11 +808,13 @@
       // estimate ticking up a point — every few minutes while you work —
       // counted as something new to say, so the character re-delivered the
       // same warning with a particle burst for the rest of the week.
-      const step = u.kind + ':' + (u.tier || 0);
+      // A reminder that belongs to one pause in one chat carries an id, so the
+      // next pause is something new to say and the same one never is.
+      const step = u.kind + ':' + (u.tier || 0) + (u.id ? ':' + u.id : '');
       if (step !== lastUsageStep) {
         lastUsageStep = step;
         say(usageLine(u), 9000);
-        if (u.tier >= 2) fx(u.kind === 'compact' ? '🧹' : '⚠', CH * 0.4);
+        if (u.tier >= 2) fx(u.kind === 'compact' ? '🧹' : u.kind === 'away' ? '⏳' : '⚠', CH * 0.4);
       }
     }
     if (!gotFirst) wavingUntil = performance.now() + 1500; // hello wave on open
@@ -829,6 +831,16 @@
     if (u.kind === 'compact') {
       return NAME + ', this chat is <b>' + esc(u.ctx || '') + '</b> now, and every reply re-reads all of it. '
         + 'Type <b>/compact</b> and the next ones get cheap again.';
+    }
+    // A big chat about to go cold: after `by`, the next message reloads it all.
+    if (u.kind === 'away') {
+      const chat = '<b>' + esc(u.project || 'that chat') + '</b>';
+      const by = '<b>' + esc(u.by || 'long') + '</b>';
+      return u.waiting
+        ? NAME + ', ' + chat + ' is still waiting for your answer. Reply before ' + by
+          + ' — after that it has to load all <b>' + esc(u.ctx || '') + '</b> again.'
+        : NAME + ', stepping away? ' + chat + ' holds <b>' + esc(u.ctx || '') + '</b>. Type <b>/compact</b> there before '
+          + by + ', or coming back to it costs a full reload.';
     }
     if (u.kind === 'session') {
       return NAME + ', the 5-hour window is <b>' + (u.pct | 0) + '%</b> used. It refills in ' + until

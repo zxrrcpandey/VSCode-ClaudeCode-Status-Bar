@@ -47,13 +47,19 @@ const os = require('os');
 
 const HOME = os.homedir();
 const CONFIG = path.join(HOME, '.claude.json');
+const SETTINGS = path.join(HOME, '.claude', 'settings.json');
 const STATE_DIR = path.join(HOME, '.claude', 'claude-pulse', 'state');
 const PROJECTS = path.join(HOME, '.claude', 'projects');
 const HISTORY = path.join(HOME, '.claude', 'claude-pulse', 'limits-history.json');
+const ASK_STAMP = path.join(HOME, '.claude', 'claude-pulse', 'usage-ask.json');
 
 // A cached reading older than this is reported as stale. Claude Code refreshes
 // it on its own slow schedule, so this is normal, not an error.
 const STALE_MS = 20 * 60 * 1000;
+// Having asked Claude Code for a new reading and not got one — signed out,
+// offline, a Claude Code too old to answer — asking again every scan would
+// start a process a minute for nothing. Wait this long instead.
+const ASK_RETRY_MS = 2 * 60 * 60 * 1000;
 // Past this fraction of a window's own length, a reading is history rather
 // than status, and must not be shown as the current figure.
 //
@@ -124,6 +130,18 @@ const FACTOR_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 // A projection past this is not a warning, it is a broken factor. Say nothing
 // rather than claim the week is gone, and throw the factor away.
 const IMPLAUSIBLE_PERCENT = 150;
+// How long the server keeps a conversation ready to be re-read at a tenth of
+// the price. Every request restarts the clock; once it runs out, the next
+// message writes the whole context back at full price instead. Claude Code
+// asks for the long one on a plan and the short one in a few cases — being on
+// overage is one — and the transcript records which, so it is read, not
+// assumed. Measured here before that was known: the shortest pause that ever
+// forced a full rewrite was 65 minutes, and every reply under 60 was warm.
+const CACHE_TTL_LONG_MS = 60 * 60 * 1000;
+const CACHE_TTL_SHORT_MS = 5 * 60 * 1000;
+// The bounds Claude Code accepts for autoCompactWindow. Outside them it
+// silently falls back to its default, so such a value is not "set".
+const AUTOCOMPACT_MIN = 100000, AUTOCOMPACT_MAX = 1000000;
 
 // Relative price per token. Output is the expensive part and a cached read is
 // a tenth of a fresh input token. These are ratios, not prices.
@@ -681,6 +699,17 @@ function transcriptFor(sid, cwds) {
   return null;
 }
 
+/* Which lifetime a turn's cache write asked for, or 0 when the record does not
+ * say. Older Claude Code versions wrote no breakdown, and assuming an hour
+ * would put a clock time on screen that nothing supports. */
+function cacheTtl(usage) {
+  const c = usage && usage.cache_creation;
+  if (!c || typeof c !== 'object') return 0;
+  const long = num(c.ephemeral_1h_input_tokens), short = num(c.ephemeral_5m_input_tokens);
+  if (long <= 0 && short <= 0) return 0;
+  return long >= short ? CACHE_TTL_LONG_MS : CACHE_TTL_SHORT_MS;
+}
+
 function applyUsage(out, usage, model, at, effort) {
   const inp = num(usage.input_tokens), cw = num(usage.cache_creation_input_tokens),
     cr = num(usage.cache_read_input_tokens), o = num(usage.output_tokens);
@@ -693,6 +722,10 @@ function applyUsage(out, usage, model, at, effort) {
   out.model = model;
   out.effort = effort;
   out.turn = { cost, contextShare: 0, turns: 0, out: o, in: inp + cw, cacheRead: cr };
+  // A turn that wrote nothing new says nothing about the lifetime, so the last
+  // one that did still stands.
+  const ttl = cacheTtl(usage);
+  if (ttl) out.cacheTtlMs = ttl;
 }
 
 /* How much of a reply goes on re-reading what was already said, totalled over
@@ -731,7 +764,8 @@ function sessionStats(file, seed) {
 
 function statsOverTail(file, bytes, seed) {
   const out = { ctx: 0, model: null, effort: null, at: 0, turn: null,
-                compactedAt: 0, compactTrigger: null, preTokens: null, postTokens: null, blocked: null };
+                compactedAt: 0, compactTrigger: null, preTokens: null, postTokens: null, blocked: null,
+                cacheTtlMs: 0, cacheExpiresAt: 0, reloadTimes: null };
   const agg = { cost: 0, cacheRead: 0, turns: 0 };
   const seenIds = {};
   for (const line of tailOf(file, bytes)) {
@@ -796,6 +830,21 @@ function statsOverTail(file, bytes, seed) {
     out.turn.turns = agg.turns;
     out.turn.contextShare = agg.cost > 0 ? (agg.cacheRead * W_CACHE_READ) / agg.cost
       : (out.turn.cost > 0 ? (out.turn.cacheRead * W_CACHE_READ) / out.turn.cost : 0);
+    // When this conversation stops being cheap to come back to. The clock
+    // restarts with every request, so it runs from the newest reply. Subagent
+    // traffic was skipped above, rightly: it re-reads its own context and
+    // does nothing for this one.
+    //
+    // This is the expensive mistake nobody sees happen. On the machine this
+    // was written on, 29 returns to a conversation left for over an hour cost
+    // 11% of a week between them — each one as much as eleven ordinary
+    // replies — and the only moment it is cheap to avoid is before leaving.
+    if (out.cacheTtlMs) out.cacheExpiresAt = out.at + out.cacheTtlMs;
+    // What that reload costs next to an ordinary reply here, once there are
+    // enough recent replies to say what ordinary is.
+    if (agg.turns >= MIN_SHARE_TURNS && agg.cost > 0) {
+      out.reloadTimes = (out.ctx * W_CACHE_WRITE) / (agg.cost / agg.turns);
+    }
   }
   // A successful turn after a rejection is proof the session recovered. The
   // clock alone cannot establish that: a rejection with no resetsAt would
@@ -832,10 +881,47 @@ function liveSessions(ledgerStats) {
       // flattened, so the tail of it is the closest honest guess.
       : (found.dir ? found.dir.split('-').filter(Boolean).pop() : sid.slice(0, 8));
     st.state = s.state;
+    // A bare "waiting" also covers a permission request Claude Code approved
+    // by itself a moment later. Only a confirmed one means a person is needed.
+    st.waitingConfirmed = s.state === 'waiting' && s.waiting_confirmed === true;
     st.updatedAt = num(s.updated_at);
     out[sid] = st;
   }
   return out;
+}
+
+// ------------------------------------------------- Claude Code's own ceiling
+
+/* How large Claude Code lets a conversation grow before it compacts by itself:
+ * its own `autoCompactWindow` setting, the one `/autocompact` edits. Read here
+ * so both halves of Pulse describe it the same way. Left alone it is the
+ * model's whole window — a million tokens on the models this was written
+ * against, where the only automatic compaction in a week fired at 966k.
+ *
+ * Checked against Claude Code 2.1.296 with `claude -p /autocompact`:
+ *   - the environment variable beats everything,
+ *   - a model's own entry beats the top-level one, "auto" included,
+ *   - a top-level value that is not a whole number from 100k to 1M is ignored.
+ * Only an environment variable set in settings.json is visible from here. One
+ * exported from a shell profile is not, and nothing below claims otherwise. */
+function autoCompactState(cfg) {
+  const s = readJSON(SETTINGS) || {};
+  const valid = (v) => typeof v === 'number' && v % 1 === 0 && v >= AUTOCOMPACT_MIN && v <= AUTOCOMPACT_MAX;
+  const models = {};
+  const per = s.modelSettings && typeof s.modelSettings === 'object' ? s.modelSettings : {};
+  for (const name of Object.keys(per)) {
+    const v = per[name] && per[name].autoCompactWindow;
+    if (v === 'auto' || valid(v)) models[name] = v;
+  }
+  const env = s.env && typeof s.env === 'object' ? s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW : null;
+  return {
+    // null means Claude Code decides, which is what it calls "auto".
+    window: valid(s.autoCompactWindow) ? s.autoCompactWindow : null,
+    models,
+    env: (typeof env === 'string' || typeof env === 'number') && String(env) !== '' ? String(env) : null,
+    // Switched off altogether in /config: no window is acted on at all.
+    off: s.autoCompactEnabled === false || !!(cfg && cfg.autoCompactEnabled === false),
+  };
 }
 
 // --------------------------------------------------------------- persistence
@@ -847,6 +933,37 @@ function saveHistory(hist) {
     fs.writeFileSync(tmp, JSON.stringify(hist));
     fs.renameSync(tmp, HISTORY);
   } catch { /* the history is an optimisation: losing it costs a trend, not correctness */ }
+}
+
+// ------------------------------------------------- when to ask for a reading
+
+/* Whether it is worth having Claude Code fetch a new reading now.
+ *
+ * This script never asks anything itself. Whatever runs it — the macOS app,
+ * the VS Code extension — can start `claude -p /usage`, which makes Claude
+ * Code fetch the figure exactly as typing /usage does and costs no tokens.
+ * That host writes { at } to ASK_STAMP as it does so, which is what stops the
+ * app and every open window from all asking in the same minute.
+ *
+ * Only when the reading has aged out AND something has been spent since it
+ * was taken: an account left alone has nothing new to report, and should not
+ * be polled just because a menu is open. */
+function usageCheck(cfg, fetchedAt, buckets, now) {
+  const stamp = readJSON(ASK_STAMP);
+  let askedAt = stamp && typeof stamp === 'object' ? num(stamp.at) : 0;
+  // A stamp from the future is a clock that was changed, not a recent ask.
+  if (askedAt > now) askedAt = 0;
+  // Asked since the reading we hold, and it is still the one we hold.
+  const unanswered = askedAt > fetchedAt;
+  // No subscription login, no plan limits: an API-key install has nothing
+  // /usage could fetch, however often it is asked.
+  const signedIn = !!cfg.oauthAccount && typeof cfg.oauthAccount === 'object';
+  const due = signedIn
+    && now - fetchedAt > STALE_MS
+    && now - askedAt > (unanswered ? ASK_RETRY_MS : STALE_MS)
+    && unitsBetween(buckets, fetchedAt, now) > 0;
+  // "Failed" only once it has had time to answer; a run takes a few seconds.
+  return { due, askedAt, failed: unanswered && now - askedAt > 60000 };
 }
 
 // ------------------------------------------------------------------- the scan
@@ -935,6 +1052,8 @@ function scan() {
       reason: typeof extra.disabled_reason === 'string' ? extra.disabled_reason : null,
     } : null,
     sessions,
+    autoCompact: autoCompactState(cfg),
+    check: usageCheck(cfg, fetchedAt, hist.buckets, now),
     spend: { lastHourUnits: spentLastHour, watchingSince: num(hist.from) || now },
   };
 }
