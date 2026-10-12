@@ -358,6 +358,11 @@ Choose *Claude Code's Default* first if you want it gone, or delete that line fr
 
 ## Troubleshooting
 
+What each symptom turned out to be. The reasoning behind the fixes is collected under
+[Lessons from building it](#lessons-from-building-it).
+
+### The indicator
+
 - **Shows idle "✳ Claude" but a session is running** — check
   `ls ~/.claude/claude-pulse/state/` for `*.json` files; if none appear, hooks aren't firing
   (run `/hooks` inside Claude Code to verify they loaded). Sessions are matched to a window
@@ -384,6 +389,63 @@ Choose *Claude Code's Default* first if you want it gone, or delete that line fr
   middle of the bar when space runs out; the far edges survive. Claude Pulse therefore sits
   at the far-right edge by default (`claudePulse.priority: -900`). If another extension
   crowds it out, lower the priority further, or move it with `claudePulse.alignment`.
+- **Stale ghost sessions** — busy sessions with no events for a long time are dropped
+  automatically (60 min working; anything untouched for 4 h is deleted). To force-clear a
+  stuck indicator, run **Claude Pulse: Reset Session States** from the command palette (or
+  click the item → "Reset all session states").
+- **Sessions named "p" that you never started, some stuck on "needs input"** — left behind by
+  `scripts/test-waiting.js` run without a throwaway `HOME`. It used to rely on being given
+  one, which is easy to forget; run plainly it emptied the real state folder and wrote its
+  nine test sessions there. *Reset Session States* clears them. Since 0.16.0 the suite makes
+  its own `HOME` and deletes it, so it cannot touch yours.
+- **After installing an update, VS Code behaves like the old version** — every window keeps
+  the extension build it loaded until that window is reloaded (*Developer: Reload Window*).
+  This matters more than it sounds: an old build in a VS Code window and a new menu bar app
+  once each rewrote the shared usage history in their own format, wiping the other's, so the
+  pace Pulse had learnt kept being thrown away. Reload every window after an update.
+
+### Usage figures and warnings
+
+- **The usage line says "last checked 2d ago", or there is no percentage at all** — that is
+  the age of Claude Code's own saved reading, not Pulse failing to read it. Claude Code
+  refreshes it rarely, and since 0.15.0 Pulse will not print a figure that old. Since 0.16.0
+  it asks for a new one itself ([Keeping the reading fresh](#keeping-the-reading-fresh)). If
+  the line still does not move, *Usage Warnings › Check Usage Now*, or
+  `ClaudePulse --check-usage` in a terminal, tells you what Claude Code answered.
+- **"Claude Code did not answer the last check", or *Unknown skill: usage*** — the Claude
+  Code that Pulse found cannot answer `/usage` without a terminal: 2.1.69 replies *Unknown
+  skill: usage*, 2.1.296 answers properly. Update Claude Code, or install its VS Code
+  extension — Pulse uses the newest copy on the machine, and the one inside the extension
+  usually is. Being signed out or offline looks the same. Pulse tries again after two hours,
+  not every minute.
+- **Pulse and `claude.ai/settings/usage` disagree** — two different things get mistaken for
+  one. The list under *This week's usage by product* is how your usage **divides up** and
+  adds to 100%: "Claude Code 96%" means 96% of what you used went through Claude Code, not
+  that 96% of the limit is gone. Pulse prints that list as *where this week's usage went*
+  for exactly that reason. The limit itself is the bar above it. If those two differ, look
+  at the age of the reading: a figure with a `~` has been carried forward from the reading
+  it names.
+- **The menu shows a high percentage but no banner ever came** — intended. The banner only
+  interrupts when the current pace would empty the window before it refills, or when you are
+  nearly out outright; a reading too old to trust raises nothing at all; and *Quiet for
+  4 Hours* silences everything. *Usage Warnings › Show Me What It Looks Like* puts one up so
+  you can see it works.
+- **"Stepping away?" never shows** — it needs all of these at once: a chat of 200k tokens
+  or more (`awayWarnTokens`), the next move being yours, the one-hour cache (with the
+  five-minute one the deadline has passed before anyone could act), and somebody actually
+  there — a key or the mouse touched in the last four minutes on the Mac, or that VS Code
+  window in focus. Walk away first and there is nobody to tell, which is the case
+  [automatic compacting](#making-claude-code-compact-by-itself) exists for. *Show Me the
+  Idle-Chat Reminder* previews it.
+- **Compact Chats Automatically seems to do nothing** — ask Claude Code what is in force:
+  `claude -p /autocompact` answers with the size and where it came from, e.g. *250k tokens
+  (from settings)*. If that is not the size you chose, something else is winning: an
+  environment variable (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which Pulse reports instead of
+  offering a switch), or a stricter size you gave that model with `/autocompact`. A chat
+  that was already open picks the new size up when it is next started.
+
+### The macOS app and its desktop buddy
+
 - **Clicking items in the menu bar dropdown does nothing (e.g. picking a character)** — fixed
   in 0.13.0. The dropdown was being torn down and rebuilt four times a second while open to
   keep its timers live, which destroyed the *Buddy Character* submenu (and whatever item was
@@ -408,10 +470,6 @@ Choose *Claude Code's Default* first if you want it gone, or delete that line fr
 - **The desktop buddy vanished** — fixed in 0.12.1: the web content process can be killed
   under memory pressure, leaving the window up but empty. The buddy now reloads itself when
   that happens, and a watchdog revives it if the page stops reporting its position for 5 s.
-- **Stale ghost sessions** — busy sessions with no events for a long time are dropped
-  automatically (60 min working; anything untouched for 4 h is deleted). To force-clear a
-  stuck indicator, run **Claude Pulse: Reset Session States** from the command palette (or
-  click the item → "Reset all session states").
 
 ## Settings
 
@@ -452,3 +510,150 @@ defaults write com.warroom.claude-pulse awayNudge -bool false     # no idle-chat
 defaults write com.warroom.claude-pulse awayWarnTokens -int 150000
 defaults write com.warroom.claude-pulse usageAutoCheck -bool false  # never ask Claude Code for a reading
 ```
+
+## Lessons from building it
+
+Each of these was assumed, turned out to be false, and cost a bug or a wrong number. They are
+written down so the next change does not pay for them again. Most were caught in testing or
+review before a release; the ones that reached a release are under
+[Troubleshooting](#troubleshooting) by symptom.
+
+### What Claude Code actually does
+
+- **`PermissionRequest` does not mean you are needed.** It fires for auto-approved calls too
+  (thirteen in 45 seconds in `acceptEdits` mode) and mostly from subagents. Only the
+  `Notification` about six seconds later is a reliable sign. Treating the first as the second
+  pinned the indicator on "needs input".
+- **Nothing fires when you approve a permission.** The next event is the tool finishing, so a
+  wait has to be aged out — from the moment it was confirmed, not from the last event of any
+  kind, because parallel agents never stop producing events.
+- **A fix can carry the opposite bug.** The first repair of the stuck wait made confirmed
+  waits expire the moment they were born. A review caught it, and `scripts/test-waiting.js`
+  exists because of it: run it after any change to those rules.
+- **A hook's `cwd` follows the shell.** After a `cd` the session reports a different folder,
+  so a session is matched to a window by every folder it has reported. The first folder on
+  record is not a safe project name either — it is lost when the state file is recreated, and
+  a project once showed up as `macos` — so the name is whichever recorded folder matches the
+  transcript's own.
+- **New hook types are only picked up when a session starts.** `SubagentStart` and
+  `SubagentStop` never fired in a session that was already running.
+- **`~/.claude/settings.json` is not yours.** Claude Code rewrites it while sessions run.
+  Every script here reads it, changes only its own keys, backs the file up and writes it back.
+- **The cached usage reading is history, not a meter.** It has been found 17, 35 and 48 hours
+  old. A window that has rolled over since the reading is easy to catch. A weekly window does
+  not roll over within the week, so a two-day-old "8%" passed that test and went into a
+  banner while the real figure was 24%. A reading older than a tenth of its window is now
+  withheld, and Pulse fetches a new one.
+- **A percentage needs its denominator in the label.** "Claude Code 88%" printed under
+  "weekly limit 8%" reads as 88% of the limit. It is a share of usage, and now says so.
+- **`claude -p` behaves like you opening Claude Code unless told otherwise.** A plain run
+  fired the user's own `SessionStart` and `SessionEnd` hooks. The usage check therefore passes
+  `--setting-sources project`, `--settings '{"disableAllHooks":true}'`, `--strict-mcp-config`
+  and `--no-session-persistence`, starts in an empty temporary folder, and closes stdin (left
+  open, Claude Code waits three seconds for it). `--bare` looks like the tidy way to get all
+  of that and is no use: it skips the keychain, so there is no login.
+- **Even then it leaves something behind** — an empty project folder under
+  `~/.claude/projects`, named after the folder it ran in. Pulse removes it, and only when it
+  is empty.
+- **The `claude` on the PATH can be the oldest one on the machine.** Here it was 2.1.69,
+  beside 2.1.296 inside the VS Code extension. Versions are compared as numbers, because as
+  text 2.1.69 sorts above 2.1.296.
+- **Claude Code can refuse to start inside Claude Code.** 2.1.69 did, and an app or editor
+  launched from a Claude Code terminal inherits the variable that triggers it, so Pulse
+  clears `CLAUDECODE` from the environment it hands over.
+- **A transcript mixes the conversation with its subagents.** Records marked `isSidechain`
+  belong to a subagent; counting one made a chat look 900k tokens large. And straight after a
+  compaction, the size to report is what the compaction kept (8k), not what it dropped (238k).
+- **Auto-compact has three sources and one silent failure.** A model's own entry beats the
+  top-level setting, an environment variable beats both, and a value outside 100k–1M is
+  ignored without a word.
+- **The cache lifetime is in the transcript, so read it.** It was an hour on the account this
+  was built on and can be five minutes. With five minutes, a reminder timed fifteen minutes
+  ahead would have fired after every single reply.
+
+### macOS
+
+- **A transparent window swallows every click** unless it ignores mouse events outright.
+  Returning `nil` from a hit test only makes the click land nowhere.
+- **A window cannot span two displays** while *Displays have separate Spaces* is on, which is
+  the default. One panel per screen — and `NSScreen.main` is whichever screen has focus, not
+  a fixed one.
+- **An accessory app is never the active app,** so the first click on its window is spent
+  activating it unless the view accepts the first mouse click.
+- **Never rebuild a menu that is open.** Refreshing the dropdown four times a second
+  destroyed the submenu under the cursor. Build it when it opens and change only text after.
+- **`fittingSize` is zero for a view laid out by frames.** The first usage banner was a 0×0
+  window: created, on screen, invisible. Listing the windows with
+  `CGWindowListCopyWindowInfo` found that in a minute; a screenshot only showed nothing.
+- **`launchctl bootout` does not unload a job, it kills it.** Started at login by its own
+  LaunchAgent, the app terminated itself when *Open at Login* was switched off, one line
+  before deleting the plist: the icon vanished and the agent was back at the next login. The
+  plist goes first, and the app never boots out its own job.
+- **Process ids wrap,** so "the older copy has the lower pid" stops being true on a Mac that
+  has been up a while. The single-instance guard takes a lock instead.
+- **An ad-hoc rebuild changes the signature and can silently drop the login item.** The app
+  registers itself again after an update.
+- **A GUI app inherits no shell `PATH`.** Whatever it launches — Node, `claude` — it has to
+  look for in the places it could be.
+- **A web view's content process can be killed under memory pressure,** leaving a window
+  that is up and blank. The buddy reloads itself, and warnings are plain AppKit so there is
+  no web process to lose.
+- **In WebKit, CSS `zoom` scales an element's position as well as its size.** Page zoom
+  scales everything together.
+- **Two candidates in one pass means two banners.** Marking one as shown let the very next
+  evaluation put up the next, 356 ms later. A banner is only raised when none is on screen.
+- **`open` fails with −600 while the previous copy is still exiting.** `build.sh --install`
+  waits for it to go.
+- **Building:** the app delegate is split across files as extensions, and a Swift extension
+  cannot hold a stored property, so new state goes in the class in `ClaudePulse.swift`. With
+  `swiftly` installed, plain `swiftc` is a toolchain that cannot read the current SDK;
+  `build.sh` uses `xcrun swiftc -sdk "$(xcrun --show-sdk-path)"`.
+
+### Numbers people act on
+
+- **Do not learn from one sample.** The first calibration had three ways to learn a cost per
+  percent several times too large — an interval it had not read all of, a step with too little
+  local spend to explain it, a per-model window divided by the whole account's spend — and
+  then asserted it. It now needs three clean pairs.
+- **Clamping hides a wrong answer.** A factor that projects past what is possible is dropped,
+  not capped at 200% and called calibrated.
+- **The server's percentage covers the whole account; the local ledger sees only Claude
+  Code.** A weekly step is discounted by the share the server itself reports.
+- **One reply is not a trend.** A single short reply put the context share at 97%. It is
+  averaged over the recent turns.
+- **One unreadable file must not end the scan.** A transcript from a session run under
+  `sudo` threw out of the reader and killed the whole scan — silently, since every consumer
+  treats no output as a blip and keeps the last reading. It now counts as "no new bytes",
+  and a run of failures is reported.
+- **An incremental reader can wedge.** One line longer than the read buffer left the offset
+  where it was for ever. It skips forward.
+- **Write only what changed.** The history file, 204 KB, was being rewritten every minute by
+  every running copy. It is smaller now and written only when something in it changed.
+- **Do not drop a caller because you are busy.** A manual *Check Usage Now* arriving during
+  a scan would have had its result thrown away; callers queue, to a limit.
+- **Everything wakes at once.** VS Code restores its windows together and they scan in step,
+  so whoever asks for a reading writes a stamp first and the others stand back — as the
+  extension does for the macOS app.
+- **A warning that cries wolf gets switched off.** 80% with a refill twenty minutes away is
+  not news. Interrupt only when the pace would empty the window before it refills.
+- **Say only what was measured.** "An hour on most plans" became "an hour on the account
+  this was built on", and "12.5 times dearer" became a range once the two cache-write prices
+  were looked up.
+
+### Testing
+
+- **A test builds its own world.** `scripts/test-waiting.js` trusted its caller to hand it a
+  throwaway `HOME`. Run plainly it emptied the real state folder and left nine fake sessions
+  in the menu bar. Every suite now creates and deletes its own.
+- **Two runtimes, one answer.** The same scripts run under Node in VS Code and under
+  JavaScriptCore in the app, which provides only the parts of `fs`, `path` and `os` they
+  use. Every suite is run through both, and they must agree.
+- **Test how a program was started, not how you meant to start it.** The usage check is
+  tested against a stand-in `claude` that records the binary, folder, arguments, environment
+  and stdin it was given, and only moves the reading when started the way the real one needs.
+- **The single-instance lock lives in the real home folder,** so a test copy given a fake
+  `HOME` stands down while the installed app is running. Quit that first.
+- **A dying app writes its preferences back.** Clearing a `defaults` key and then quitting
+  the app restores the key. Quit, then clear.
+- **Look for the window, not at the screen.** Asking the window server which windows exist,
+  and how large, answers questions a screenshot cannot.
