@@ -164,10 +164,24 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
                     var el = document.getElementById('char');
                     if (el) {
                       var r = el.getBoundingClientRect();
+                      // What is actually drawn: the art fills the lower part of
+                      // its box, and a click on the empty rest belongs to
+                      // whatever is underneath. The box itself still says
+                      // where the character is, for reaching a screen's edge.
+                      var hot = null, parts = el.querySelectorAll('#rig > svg');
+                      for (var i = 0; i < parts.length; i++) {
+                        var p = parts[i].getBoundingClientRect();
+                        if (!p.width || !p.height || getComputedStyle(parts[i]).display === 'none') continue;
+                        hot = hot ? { l: Math.min(hot.l, p.left), t: Math.min(hot.t, p.top),
+                                      r: Math.max(hot.r, p.right), b: Math.max(hot.b, p.bottom) }
+                                  : { l: p.left, t: p.top, r: p.right, b: p.bottom };
+                      }
+                      if (!hot) hot = { l: r.left, t: r.top, r: r.right, b: r.bottom };   // an image
                       var parked = false;
                       try { parked = held || performance.now() < parkUntil; } catch (e) {}
                       window.webkit.messageHandlers.pulse.postMessage(
-                        { type: 'rect', x: r.left, y: r.top, w: r.width, h: r.height, parked: parked });
+                        { type: 'rect', x: r.left, y: r.top, w: r.width, h: r.height,
+                          hx: hot.l, hy: hot.t, hw: hot.r - hot.l, hh: hot.b - hot.t, parked: parked });
                     }
                     setTimeout(report, 100);
                   }
@@ -550,9 +564,12 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             s.parked = body["parked"] as? Bool ?? false
             s.cssRect = NSRect(x: cx, y: cy, width: cw, height: ch)
             if abs(cx - s.lastX) > 1 { s.lastX = cx; s.stillSince = Date() }
+            // Only the drawn parts take clicks.
+            let hx = body["hx"] as? Double ?? cx, hy = body["hy"] as? Double ?? cy
+            let hw = body["hw"] as? Double ?? cw, hh = body["hh"] as? Double ?? ch
             // CSS pixels → view points (× page zoom), top-left → bottom-left origin.
             let z = Double(web.pageZoom)
-            let x = cx * z, y = cy * z, w = cw * z, h = ch * z
+            let x = hx * z, y = hy * z, w = hw * z, h = hh * z
             let pad: CGFloat = 10
             let r = NSRect(x: x - pad, y: s.container.bounds.height - y - h - pad,
                            width: w + pad * 2, height: h + pad * 2)

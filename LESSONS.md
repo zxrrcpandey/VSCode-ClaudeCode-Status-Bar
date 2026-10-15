@@ -1,7 +1,7 @@
 # Lessons
 
 Everything that went wrong while building Claude Pulse, why it went wrong, and what the code
-does about it now — from the first status bar item to 0.17.0.
+does about it now — from the first status bar item to 0.18.0.
 
 The README's [Troubleshooting](README.md#troubleshooting) covers some of the same ground by
 symptom, for someone *using* Pulse. This file is for someone *changing* it. There are two ways
@@ -269,6 +269,15 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   flowers left behind. Page zoom scales everything together.
 - **Inline a custom image as a `data:` URI** and the page keeps its strict content security
   policy and needs no file access.
+- **A web view that is not on screen does not animate.** WebKit pauses
+  `requestAnimationFrame` and CSS transitions in an offscreen window, so a tool that renders
+  poses to images steps the page's loop itself and turns transitions off.
+- **A filter region measured from the shape collapses on a straight line.** The default
+  `objectBoundingBox` region is zero wide for a vertical stroke, so the bee's antenna stems
+  vanished, and it clipped every glow to a square. The shared shadow filter uses a fixed
+  region in user space.
+- **`children`, not `childNodes`.** The runs of whitespace between elements are nodes too; each one
+  became a layer the size of the whole drawing and made the click area that size.
 
 ### Packaging and building
 
@@ -308,6 +317,24 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   only counted after an actual launch, and the urgent "needs input" bounce cannot hijack a
   crouch.
 - **Art has a front.** The snail was drawn facing backwards and travelled tail first.
+- **Detail is paid for every frame unless it is painted once.** The 0.18.0 drawings, with
+  gradients, fur and shadows, roughly tripled the GPU process's CPU while the whole drawing
+  was redrawn with each limb's new angle. Every moving part is now its own small layer,
+  cropped to its own bounds and turned by CSS `rotate` about its pivot, so the compositor
+  moves a picture it already has. A CSS drop shadow on those layers was applied again every
+  frame; the same shadow as an SVG filter inside the layer is painted with it once.
+- **Look at every pose, not one.** A drawing that is right standing can be wrong mid-wave:
+  a raised arm covered the face, the cat's pointing paw stuck out like a plank, leg tops
+  showed as rectangles in front of the body, and the dragon's spade sat behind its wing.
+  Each was found in a contact sheet of fourteen poses — standing, walking, asleep, done,
+  error, waiting, pointing, hanging, on a wall and the ceiling, waving, talking, held and
+  facing left.
+- **Measure from the art.** Hanging from the ceiling used a fixed lift and overshot in a
+  short panel. Each character now says where its raised hands are (`reach`) and the lift
+  is worked out from that.
+- **The click area and the box are different things.** Only the drawn parts take clicks
+  now, so the panel passes clicks through the empty corners. The whole box is still what
+  is used to tell when the character has reached a screen edge.
 - **The character list lives in three places** — `CHARS` in `buddy.html`, the list and picker
   in `extension.js`, the enum in `package.json` — and they have to change together.
 - **Something you can drag has to stay where it is put.** The character roamed everywhere,
@@ -401,6 +428,16 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   objects are in reach: the test reads the panel's hot rectangle and runs JavaScript in the
   page. The installed app still has to be quit first, both for the lock and so that its
   own character cannot catch the test's clicks.
+- **Measure the GPU process as well as the page.** Most of what the buddy costs is in
+  WebKit's GPU process, not the web content process. Ask the web view for both
+  (`_webProcessIdentifier`, `_gpuProcessIdentifier`); adding up every `WebKit.GPU`
+  process on the machine counts other apps too.
+- **Read a pipe before waiting for the process.** A tool that called `waitUntilExit` on
+  `ps` before reading its output hung for good once the output filled the pipe.
+- **Track the thing, not the edge of what it covers.** The drag test took the middle of the
+  click area as the character's position and reported a parked red panda as moved 13 pt.
+  It had only turned to look round, and its click area is not symmetrical. The test reads
+  the position from the page.
 - **A gap between two manual steps looks like staleness.** A reading that seemed 39 minutes
   old "right after refreshing" was the time between the two commands. Check the file's own
   timestamp.
@@ -493,11 +530,18 @@ found by review or test did not reach a release.
 | 0.16.0 | Usage history wiped back and forth | Old extension build and new app, two formats | Matching builds; reload windows | in use |
 | 0.16.1 | Banner blocked the view | Draggable, but nothing showed it, and each banner started at the top centre again | Grab bar; each screen remembers its spot; kept on its own screen; double-click resets | reported |
 | 0.17.0 | Desktop character blocked the view | It roamed everywhere and could not be moved | Drag it anywhere, other screen too; it stays put ten minutes | reported |
+| 0.18.0 | Characters did not look real | Flat shapes, one colour each | Redrawn with shading, fur or scales, and eyes that blink | reported |
+| 0.18.0 | New drawings tripled the GPU process's CPU | The whole drawing redrawn each frame | Each moving part its own layer; shadow painted once | test |
+| 0.18.0 | Bee's antenna stems missing; glows cut square | Filter region measured from a zero-width shape | Fixed region in user space | test |
+| 0.18.0 | Click area the size of the whole box | Whitespace nodes became layers | Only elements become layers | test |
+| 0.18.0 | Raised arm hid the face; dragon's spade hidden | Parts checked in one pose only | Arm angles eased above the shoulder; tail redrawn | test |
 
 ## Known gaps
 
 - The two menu rows added in 0.16.0, *Keep the usage figures up to date* and *Check Usage
   Now*, have had the code beneath them tested but have not been exercised by a click.
+- The 0.18.0 drawings were checked in the macOS app and in rendered poses. In the VS Code
+  panel they run from the same `buddy.html` but have not been looked at there by hand.
 - Nothing in `scripts/` loads `extension.js`. It is checked by hand under a stubbed `vscode`
   module before a release.
 - The usage check depends on how Claude Code 2.1.296 answers `/usage` without a terminal. A

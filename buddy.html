@@ -20,21 +20,25 @@
     transition: filter .2s;
   }
   #char:hover { filter: brightness(1.1); }
-  #char svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  #char svg {
+    position: absolute; left: 0; top: 0;
+    width: 100%; height: 100%; display: block; overflow: visible;
+  }
+  #char.img svg { display: none; }
+  /* One layer per moving part, each painted once and moved by the compositor.
+     (Their drop shadow is the SVG filter #lift, painted with the layer: as a
+     CSS filter the compositor redid it every frame, doubling the GPU time.) */
+  #rig { position: absolute; inset: 0; }
+  #rig svg { will-change: transform; }
   #charimg {
     display: none; width: 100%; height: 100%;
     object-fit: contain; object-position: bottom;
     image-rendering: auto; pointer-events: none;
   }
-  .ear { fill: #d99347; }
-  .earin { fill: #b8763a; }
-  #body { fill: #f2b366; }
-  .cheek { fill: rgba(226, 120, 100, .45); }
-  .eye { fill: #ffffff; }
-  .pupil { fill: #3a2c18; }
-  #mouth { stroke: #3a2c18; stroke-width: 2.4; fill: none; stroke-linecap: round; }
-  .xeye { stroke: #3a2c18; stroke-width: 2.6; stroke-linecap: round; display: none; }
-  .lid { stroke: #3a2c18; stroke-width: 2.6; stroke-linecap: round; display: none; }
+  #char .ln { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  #char .es, #char .ex { display: none; }
+  #rig svg.beacon { animation: beacon 2.4s ease-in-out infinite; }
+  @keyframes beacon { 0%, 55%, 100% { opacity: 1; } 70%, 85% { opacity: .25; } }
 
   #bubble {
     position: absolute; max-width: 320px;
@@ -73,7 +77,7 @@
     font-size: 11px; color: var(--vscode-descriptionForeground, #888);
     pointer-events: none;
   }
-  @media (prefers-reduced-motion: reduce) { .fx { animation-duration: .01s; } }
+  @media (prefers-reduced-motion: reduce) { .fx { animation-duration: .01s; } #rig svg.beacon { animation: none; } }
 </style>
 </head>
 <body>
@@ -81,116 +85,546 @@
   <div id="floor"></div>
   <div id="char" title="Click me, or drag me out of the way">
     <img id="charimg" alt="buddy">
-    <!-- All characters are drawn in profile, facing right (+x). dir=-1 mirrors. -->
-    <svg id="charsvg" viewBox="-60 -60 120 120">
-      <!-- far limbs: drawn behind the body -->
-      <g id="limbsBack" fill="#d99347">
-        <g id="legF"><rect x="-12" y="20" width="8" height="16" rx="4"/></g>
-        <g id="qff"><rect x="6" y="22" width="7" height="16" rx="3.5"/></g>
-        <g id="qbf"><rect x="-22" y="22" width="7" height="16" rx="3.5"/></g>
-        <g id="wingF"><ellipse cx="-6" cy="-19" rx="15" ry="6" fill="#ffffff" fill-opacity=".55" stroke="#c9d3e3" stroke-width="1.2"/></g>
-        <g id="dwingF"><path d="M -10 -2 L -36 -38 L -50 -16 L -52 2 L -38 8 Z" fill="#2f5e3c"/></g>
-      </g>
+    <!-- Every character is drawn in profile facing right (+x); dir=-1 mirrors.
+         The ground is y=40, the bottom of the box. Inside a body:
+           data-limb + data-p  a part the rig turns, and the point it turns about
+           .eo / .es / .ex     the eyes open / shut / dazed
+           data-states         drawn only in those moods: calm, waiting, done, error -->
+    <svg id="charsvg" viewBox="-60 -80 120 120">
+      <defs>
+        <filter id="fur" x="-20%" y="-20%" width="140%" height="140%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" seed="4" result="n"/>
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>
+        </filter>
+        <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.3"/></filter>
+        <filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="2.4"/></filter>
+        <!-- lifts the character off any wallpaper or editor theme -->
+        <!-- (a fixed region: one sized from the part collapses on a straight line, and clips a glow) -->
+        <filter id="lift" filterUnits="userSpaceOnUse" x="-75" y="-95" width="150" height="150"><feDropShadow dx="0" dy="1.5" stdDeviation="1.3" flood-color="#000" flood-opacity=".3"/></filter>
+        <radialGradient id="shadowG"><stop offset="0" stop-color="#000" stop-opacity=".38"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+        <!-- red panda -->
+        <radialGradient id="rpFur" cx=".45" cy=".25" r=".8"><stop offset="0" stop-color="#f0995a"/><stop offset=".55" stop-color="#cc5f2a"/><stop offset="1" stop-color="#8a3414"/></radialGradient>
+        <radialGradient id="rpDark" cx=".45" cy=".3" r=".8"><stop offset="0" stop-color="#6a3c2a"/><stop offset="1" stop-color="#26130c"/></radialGradient>
+        <radialGradient id="rpEye" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#6a3a22"/><stop offset="1" stop-color="#140a06"/></radialGradient>
+        <!-- robot -->
+        <linearGradient id="robBody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eef2f7"/><stop offset=".45" stop-color="#bcc6d3"/><stop offset="1" stop-color="#7f8a9b"/></linearGradient>
+        <linearGradient id="robLimb" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7a8597"/><stop offset=".4" stop-color="#e2e8ef"/><stop offset=".7" stop-color="#a9b3c1"/><stop offset="1" stop-color="#6c7788"/></linearGradient>
+        <linearGradient id="robFar" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5d6676"/><stop offset=".45" stop-color="#9aa4b3"/><stop offset="1" stop-color="#505968"/></linearGradient>
+        <linearGradient id="robVisor" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#26313f"/><stop offset="1" stop-color="#0a0e14"/></linearGradient>
+        <radialGradient id="robJoint" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#5b6575"/><stop offset="1" stop-color="#232933"/></radialGradient>
+        <!-- cat -->
+        <radialGradient id="catFur" cx=".45" cy=".25" r=".8"><stop offset="0" stop-color="#c9cbcf"/><stop offset=".55" stop-color="#9b9ea4"/><stop offset="1" stop-color="#6a6e75"/></radialGradient>
+        <linearGradient id="catFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7f838a"/><stop offset="1" stop-color="#5e6168"/></linearGradient>
+        <radialGradient id="catIris" cx=".45" cy=".45" r=".6"><stop offset="0" stop-color="#eef59a"/><stop offset=".55" stop-color="#b5cc3e"/><stop offset="1" stop-color="#5f7a1c"/></radialGradient>
+        <linearGradient id="catEarIn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c98490"/><stop offset="1" stop-color="#f2bcc4"/></linearGradient>
+        <!-- pup -->
+        <radialGradient id="pupFur" cx=".45" cy=".25" r=".8"><stop offset="0" stop-color="#f4cd95"/><stop offset=".55" stop-color="#d89a58"/><stop offset="1" stop-color="#a0612a"/></radialGradient>
+        <linearGradient id="pupFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b87a3c"/><stop offset="1" stop-color="#8f5524"/></linearGradient>
+        <radialGradient id="pupEar" cx=".5" cy=".2" r=".9"><stop offset="0" stop-color="#c07a3a"/><stop offset="1" stop-color="#7a4318"/></radialGradient>
+        <radialGradient id="pupIris" cx=".4" cy=".35" r=".65"><stop offset="0" stop-color="#9a5a2a"/><stop offset=".7" stop-color="#4a2410"/><stop offset="1" stop-color="#22100a"/></radialGradient>
+        <!-- turtle -->
+        <radialGradient id="ttShell" cx=".45" cy=".25" r=".85"><stop offset="0" stop-color="#c7b058"/><stop offset=".5" stop-color="#8a7a32"/><stop offset="1" stop-color="#4c4218"/></radialGradient>
+        <radialGradient id="ttSkin" cx=".45" cy=".3" r=".8"><stop offset="0" stop-color="#b9c58a"/><stop offset=".6" stop-color="#86955a"/><stop offset="1" stop-color="#56633a"/></radialGradient>
+        <linearGradient id="ttFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#76844c"/><stop offset="1" stop-color="#4e5a32"/></linearGradient>
+        <radialGradient id="ttScute" cx=".5" cy=".45" r=".6"><stop offset="0" stop-color="#ffeaa0" stop-opacity=".55"/><stop offset="1" stop-color="#ffeaa0" stop-opacity="0"/></radialGradient>
+        <!-- snail -->
+        <radialGradient id="snSkin" cx=".5" cy=".2" r=".9"><stop offset="0" stop-color="#d9c9ac"/><stop offset=".55" stop-color="#ad9a7e"/><stop offset="1" stop-color="#776652"/></radialGradient>
+        <radialGradient id="snShell" cx=".4" cy=".3" r=".8"><stop offset="0" stop-color="#f0c48a"/><stop offset=".5" stop-color="#b87838"/><stop offset="1" stop-color="#5e3412"/></radialGradient>
+        <!-- bee -->
+        <radialGradient id="beeAbd" cx=".55" cy=".3" r=".75"><stop offset="0" stop-color="#ffe08a"/><stop offset=".45" stop-color="#f4b42a"/><stop offset="1" stop-color="#a8600c"/></radialGradient>
+        <linearGradient id="beeBand" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5a3a1c"/><stop offset=".5" stop-color="#3a2410"/><stop offset="1" stop-color="#1e1208"/></linearGradient>
+        <radialGradient id="beeThx" cx=".45" cy=".3" r=".7"><stop offset="0" stop-color="#f0c060"/><stop offset=".55" stop-color="#b8782a"/><stop offset="1" stop-color="#5e3812"/></radialGradient>
+        <linearGradient id="beeHead" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2a1c10"/><stop offset=".55" stop-color="#4a3018"/><stop offset="1" stop-color="#a8732c"/></linearGradient>
+        <radialGradient id="beeEye" cx=".4" cy=".3" r=".8"><stop offset="0" stop-color="#4a5262"/><stop offset=".5" stop-color="#1b1f28"/><stop offset="1" stop-color="#07080b"/></radialGradient>
+        <linearGradient id="beeWing" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".8"/><stop offset=".5" stop-color="#d8e6ff" stop-opacity=".45"/><stop offset="1" stop-color="#f1dcff" stop-opacity=".35"/></linearGradient>
+        <radialGradient id="pollen" cx=".4" cy=".3" r=".7"><stop offset="0" stop-color="#ffd27a"/><stop offset="1" stop-color="#e08a1c"/></radialGradient>
+        <!-- dragon -->
+        <radialGradient id="drScale" cx=".45" cy=".25" r=".85"><stop offset="0" stop-color="#86d68f"/><stop offset=".5" stop-color="#3f9a57"/><stop offset="1" stop-color="#1c5530"/></radialGradient>
+        <linearGradient id="drBelly" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4e6b0"/><stop offset="1" stop-color="#c4ab62"/></linearGradient>
+        <linearGradient id="drWing" x1="1" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#3e9a74" stop-opacity=".95"/><stop offset="1" stop-color="#1f5e4a" stop-opacity=".9"/></linearGradient>
+        <linearGradient id="drHorn" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#f6ecd0"/><stop offset="1" stop-color="#9c8458"/></linearGradient>
+        <radialGradient id="drEye" cx=".45" cy=".45" r=".6"><stop offset="0" stop-color="#fff2a0"/><stop offset=".6" stop-color="#ffb22e"/><stop offset="1" stop-color="#c25a0a"/></radialGradient>
+        <!-- ghost -->
+        <linearGradient id="ghBody" x1=".6" y1="0" x2=".3" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".97"/><stop offset=".55" stop-color="#e8eefa" stop-opacity=".9"/><stop offset="1" stop-color="#c9d5ec" stop-opacity="0"/></linearGradient>
+        <radialGradient id="ghEye" cx=".5" cy=".4" r=".6"><stop offset="0" stop-color="#05070c"/><stop offset=".8" stop-color="#1d2433"/><stop offset="1" stop-color="#3a4560"/></radialGradient>
+      </defs>
+      <ellipse id="shadow" cx="0" cy="40" rx="26" ry="3.2" fill="url(#shadowG)"/>
+
+      <!-- critter: a red panda, standing -->
       <g id="body-critter">
-        <circle cx="-32" cy="14" r="5" fill="#d99347"/>
-        <ellipse cx="-2" cy="8" rx="30" ry="24" fill="#f2b366"/>
-        <circle cx="22" cy="-20" r="19" fill="#f2b366"/>
-        <circle cx="14" cy="-38" r="7" fill="#d99347"/>
-        <circle cx="14" cy="-38" r="3.2" fill="#b8763a"/>
-      </g>
-      <g id="body-robot" style="display:none">
-        <rect x="-26" y="-6" width="44" height="36" rx="8" fill="#aab6c6"/>
-        <line x1="0" y1="-40" x2="0" y2="-52" stroke="#8a97a8" stroke-width="3"/>
-        <circle cx="0" cy="-55" r="4" fill="#e06c5a"/>
-        <rect x="-14" y="-40" width="46" height="34" rx="8" fill="#aab6c6"/>
-        <rect x="-8" y="-34" width="36" height="22" rx="6" fill="#3d4654"/>
-      </g>
-      <g id="body-cat" style="display:none">
-        <path d="M -30 8 Q -50 -8 -40 -30" stroke="#848a94" stroke-width="7" fill="none" stroke-linecap="round"/>
-        <ellipse cx="-6" cy="10" rx="30" ry="18" fill="#9aa0aa"/>
-        <circle cx="24" cy="-8" r="17" fill="#9aa0aa"/>
-        <path d="M 12 -20 L 14 -36 L 24 -22 Z" fill="#848a94"/>
-        <path d="M 26 -22 L 32 -36 L 36 -20 Z" fill="#848a94"/>
-        <path d="M 15 -22 L 16 -31 L 22 -23 Z" fill="#e8b6c0"/>
-        <path d="M 28 -23 L 31 -31 L 34 -22 Z" fill="#e8b6c0"/>
-      </g>
-      <g id="body-ghost" style="display:none">
-        <path d="M -28 31 L -28 -2 A 28 28 0 0 1 28 -2 L 28 31 L 18.5 23 L 9.5 31 L 0 23 L -9.5 31 L -18.5 23 Z" fill="#dfe6f2" stroke="#b9c4d8" stroke-width="1.5"/>
-      </g>
-      <g id="body-pup" style="display:none">
-        <path d="M -34 4 Q -48 -14 -38 -26" stroke="#a9764f" stroke-width="7" fill="none" stroke-linecap="round"/>
-        <ellipse cx="-6" cy="10" rx="32" ry="19" fill="#c9956a"/>
-        <circle cx="24" cy="-8" r="18" fill="#c9956a"/>
-        <ellipse cx="36" cy="1" rx="10" ry="7" fill="#ecd2b6"/>
-        <circle cx="42" cy="-3" r="3" fill="#3a2c18"/>
-        <ellipse cx="12" cy="-12" rx="7" ry="14" fill="#a9764f" transform="rotate(14 12 -12)"/>
-      </g>
-      <g id="body-turtle" style="display:none">
-        <path d="M -42 12 L -36 4 L -34 14 Z" fill="#8fb072"/>
-        <path d="M -36 10 A 36 26 0 0 1 36 10 Z" fill="#6fa36b" stroke="#557f52" stroke-width="1.5"/>
-        <circle cx="0" cy="-8" r="7" fill="#557f52" fill-opacity=".55"/>
-        <circle cx="-18" cy="0" r="6" fill="#557f52" fill-opacity=".55"/>
-        <circle cx="18" cy="0" r="6" fill="#557f52" fill-opacity=".55"/>
-        <ellipse cx="0" cy="12" rx="38" ry="8" fill="#557f52"/>
-        <circle cx="40" cy="4" r="12" fill="#a8c98a"/>
-      </g>
-      <g id="body-bee" style="display:none">
-        <path d="M -28 4 L -40 6 L -28 9 Z" fill="#2b2b2b"/>
-        <g id="beelegs">
-          <rect x="-12" y="18" width="4" height="9" rx="2" fill="#2b2b2b"/>
-          <rect x="-2" y="19" width="4" height="9" rx="2" fill="#2b2b2b"/>
-          <rect x="8" y="17" width="4" height="9" rx="2" fill="#2b2b2b"/>
+        <g data-limb="legF" data-p="-5 25" fill="#2e1810">
+          <path d="M -9.5 24 C -10 30, -9.5 35, -8.5 37.5 C -8 40.2, -5.5 40.3, -2 40.3 L 1.5 40.3 Q 3.2 40 2.2 38.4 C 1 37, -0.5 36.5, -1 34 C -0.5 30, 0 27, -0.4 23 Z"/>
         </g>
-        <ellipse cx="-4" cy="4" rx="24" ry="17" fill="#f2c94c"/>
-        <ellipse cx="-8" cy="4" rx="4" ry="17" fill="#2b2b2b"/>
-        <ellipse cx="-20" cy="4" rx="3" ry="14" fill="#2b2b2b"/>
-        <ellipse cx="-12" cy="-6" rx="6" ry="3" fill="#ffffff" fill-opacity=".35"/>
-        <g id="antF"><line x1="20" y1="-14" x2="24" y2="-30" stroke="#2b2b2b" stroke-width="2"/><circle cx="24" cy="-31" r="2.5" fill="#2b2b2b"/></g>
-        <circle cx="22" cy="-2" r="13" fill="#f2c94c"/>
-        <g id="antN"><line x1="26" y1="-14" x2="34" y2="-28" stroke="#2b2b2b" stroke-width="2"/><circle cx="34" cy="-29" r="2.5" fill="#2b2b2b"/></g>
+        <g data-limb="tail" data-p="-10 22" filter="url(#fur)">
+          <path class="ln" d="M -10 23 C -22 21, -31 26, -34 33 C -35.5 36.5, -33 39, -29.5 38.5" stroke="#cf6a32" stroke-width="10"/>
+          <path d="M -10 23 C -22 21, -31 26, -34 33 C -35.5 36.5, -33 39, -29.5 38.5" fill="none" stroke="#7e3214" stroke-width="10.2" stroke-dasharray="3.6 4.6" stroke-dashoffset="-3"/>
+        </g>
+        <path filter="url(#fur)" fill="url(#rpFur)" d="M -14 8 C -14 -4, -6 -8, 3 -8 C 12 -8, 17 -2, 17 8 C 17 20, 12 30, 2 30.5 C -9 31, -15 22, -14 8 Z"/>
+        <path filter="url(#fur)" fill="url(#rpDark)" d="M 8 -4 C 15 -1, 17 6, 16.5 12 C 16 22, 11 29, 4 30 C 9 22, 10 10, 8 -4 Z"/>
+        <g data-limb="legN" data-p="5 25" fill="url(#rpDark)">
+          <path d="M 0.5 24 C 0 30, 0.5 35, 1.5 37.5 C 2 40.2, 4.5 40.3, 8 40.3 L 11.5 40.3 Q 13.2 40 12.2 38.4 C 11 37, 9.5 36.5, 9 34 C 9.5 30, 10 27, 9.6 23 Z"/>
+        </g>
+        <path d="M -8 -24 C -11 -30, -9 -36, -4 -37 C 0 -37.5, 2 -33, 1.5 -29 Z" fill="url(#rpFur)" stroke="#f8f1e8" stroke-width="1.6" stroke-linejoin="round"/>
+        <path d="M -6.2 -26.5 C -7.6 -30, -6.4 -33.6, -4 -34.2 C -2 -34.6, -0.8 -32, -1.2 -29.6 Z" fill="#3a1f16"/>
+        <path d="M 11 -30.5 C 13 -35.5, 18.5 -37.5, 21 -34 C 23 -31, 21.5 -26.5, 19.5 -24.5 Z" fill="url(#rpFur)" stroke="#f8f1e8" stroke-width="1.6" stroke-linejoin="round"/>
+        <path d="M 13.4 -30 C 15 -33.4, 18.4 -34.8, 19.8 -32.6 C 20.8 -30.8, 20 -28.4, 18.8 -27 Z" fill="#3a1f16"/>
+        <path filter="url(#fur)" fill="url(#rpFur)" d="M -10 -16 C -10 -27, -2 -32, 6 -32 C 15 -32, 22 -26, 22.5 -17 C 23 -9, 17 -3, 7 -3 C -3 -3, -10 -7, -10 -16 Z"/>
+        <path filter="url(#fur)" fill="#f8f1e8" d="M -10 -13 C -12 -10, -11 -6, -7 -4.5 C -5 -6, -4.5 -9, -6 -12 Z"/>
+        <path filter="url(#fur)" fill="#f8f1e8" d="M 9 -12 C 12 -15, 19 -15, 22.5 -12 C 24 -8.5, 21.5 -3.8, 16 -3.4 C 11 -3, 8 -8, 9 -12 Z"/>
+        <ellipse cx="2" cy="-22.5" rx="2.8" ry="1.7" fill="#f8f1e8" filter="url(#fur)"/>
+        <ellipse cx="13.6" cy="-23.6" rx="2.2" ry="1.4" fill="#f8f1e8" filter="url(#fur)"/>
+        <path class="ln" d="M 3.6 -14.6 C 4.4 -11, 6.4 -8.4, 9.4 -6.6 M 13.8 -15.4 C 14 -13, 14.6 -11.6, 15.6 -10.8" stroke="#8a3414" stroke-width="2.2" opacity=".75"/>
+        <g class="eo">
+          <circle cx="3.6" cy="-17.2" r="2.9" fill="url(#rpEye)"/>
+          <circle cx="4.5" cy="-18.4" r=".95" fill="#fff"/>
+          <circle cx="2.9" cy="-16.2" r=".4" fill="#fff" opacity=".7"/>
+          <circle cx="13.6" cy="-17.8" r="2.4" fill="url(#rpEye)"/>
+          <circle cx="14.3" cy="-18.8" r=".8" fill="#fff"/>
+        </g>
+        <g class="es ln" stroke="#26130c" stroke-width="1.1"><path d="M 0.8 -17.2 Q 3.6 -14.8 6.4 -17.2"/><path d="M 11.4 -17.8 Q 13.6 -15.8 15.8 -17.8"/></g>
+        <g class="ex ln" stroke="#26130c" stroke-width="1.1"><path d="M 1.2 -19.4 L 6 -17.2 L 1.2 -15"/><path d="M 15.6 -20 L 11.6 -17.8 L 15.6 -15.6"/></g>
+        <path d="M 18.6 -12.6 C 19.6 -13.6, 22.2 -13.6, 22.9 -12.4 C 23.3 -11.2, 21.8 -9.8, 20.8 -9.6 C 19.6 -9.8, 18.2 -11.4, 18.6 -12.6 Z" fill="#1d120d"/>
+        <ellipse cx="20.6" cy="-12.4" rx=".9" ry=".4" fill="#fff" opacity=".5"/>
+        <g class="ln" stroke="#2b1610" stroke-width=".9">
+          <path data-states="calm" d="M 20.8 -9.6 L 20.6 -8 C 19.5 -6.6, 17.6 -6.6, 16.6 -7.4 M 20.6 -8 C 21.3 -6.9, 22.2 -6.8, 23 -7.4"/>
+          <g data-states="done">
+            <path d="M 20.8 -9.6 L 20.6 -8"/>
+            <path d="M 16.6 -7.6 C 17.6 -3, 22 -3, 23.2 -7.4 C 20.5 -6.4, 18.6 -6.4, 16.6 -7.6 Z" fill="#5a1f1a"/>
+            <ellipse cx="19.9" cy="-5" rx="1.7" ry="1" fill="#e8737f" stroke="none"/>
+          </g>
+          <g data-states="waiting"><path d="M 20.8 -9.6 L 20.6 -8"/><ellipse cx="20.2" cy="-6.2" rx="1.2" ry="1.5" fill="#5a1f1a"/></g>
+          <path data-states="error" d="M 20.8 -9.6 L 20.6 -8 M 17 -5.8 C 18.6 -7.6, 21.4 -7.6, 23 -6"/>
+        </g>
+        <g data-limb="armN" data-p="9 1" fill="url(#rpDark)">
+          <path d="M 6 -1 C 5.5 6, 6.5 13, 8.5 18 C 9.5 21, 13.5 21, 14 18 C 14.4 13, 13.4 6, 12 -1 Z"/>
+        </g>
       </g>
-      <g id="body-dragon" style="display:none">
-        <path d="M -34 10 Q -56 6 -50 -14" stroke="#5fa86f" stroke-width="8" fill="none" stroke-linecap="round"/>
-        <path d="M -56 -10 L -50 -24 L -42 -12 Z" fill="#5fa86f"/>
-        <ellipse cx="-8" cy="12" rx="28" ry="20" fill="#5fa86f"/>
-        <ellipse cx="-4" cy="18" rx="18" ry="11" fill="#bfe3a8"/>
-        <rect x="-14" y="26" width="9" height="11" rx="4" fill="#4a8a58"/>
-        <rect x="6" y="26" width="9" height="11" rx="4" fill="#4a8a58"/>
-        <path d="M 14 4 L 30 -20" stroke="#5fa86f" stroke-width="14" stroke-linecap="round"/>
-        <ellipse cx="34" cy="-26" rx="16" ry="12" fill="#5fa86f"/>
-        <path d="M 30 -36 L 34 -52 L 38 -36 Z" fill="#e9d7a0"/>
-        <path d="M 38 -35 L 44 -50 L 46 -34 Z" fill="#e9d7a0"/>
+
+      <!-- robot -->
+      <g id="body-robot" style="display:none">
+        <g data-limb="legF" data-p="-7 22">
+          <rect x="-10" y="20" width="6" height="11" rx="2.5" fill="url(#robFar)"/>
+          <circle cx="-7" cy="31" r="3" fill="url(#robJoint)"/>
+          <rect x="-9.5" y="31" width="5" height="6.5" rx="2" fill="url(#robFar)"/>
+          <rect x="-12.5" y="36.4" width="13" height="3.9" rx="1.8" fill="#4d5665"/>
+        </g>
+        <rect x="-1.5" y="-9.5" width="9" height="7.5" rx="2" fill="url(#robJoint)"/>
+        <path class="ln" d="M -1.5 -7 L 7.5 -7 M -1.5 -4.6 L 7.5 -4.6" stroke="#8a95a6" stroke-width=".7"/>
+        <rect x="-18" y="-3.5" width="35" height="28.5" rx="8" fill="url(#robBody)" stroke="#5e6878" stroke-width=".8"/>
+        <path class="ln" d="M -17.5 5 L 16.5 5" stroke="#6c7686" stroke-width=".6" opacity=".7"/>
+        <path class="ln" d="M -14 9 L -6 9 M -14 12 L -6 12 M -14 15 L -6 15" stroke="#7d8898" stroke-width="1.2"/>
+        <rect x="-1" y="7.5" width="15" height="13" rx="3" fill="#2a323e" stroke="#59636f" stroke-width=".6"/>
+        <circle cx="3" cy="11" r="1.1" fill="#3ddc84"/>
+        <circle cx="6.5" cy="11" r="1.1" fill="#ffc94a"/>
+        <circle cx="10" cy="11" r="1.1" fill="#59d7ff"/>
+        <rect data-states="calm" x="1.5" y="14.5" width="10" height="3.2" rx="1.6" fill="#3ddc84"/>
+        <rect data-states="done" x="1.5" y="14.5" width="10" height="3.2" rx="1.6" fill="#59d7ff"/>
+        <rect data-states="waiting" class="beacon" x="1.5" y="14.5" width="10" height="3.2" rx="1.6" fill="#ffc94a"/>
+        <rect data-states="error" class="beacon" x="1.5" y="14.5" width="10" height="3.2" rx="1.6" fill="#ff5a5a"/>
+        <g fill="#8d98a8"><circle cx="-14.6" cy="0" r=".8"/><circle cx="13.6" cy="0" r=".8"/><circle cx="-14.6" cy="21.6" r=".8"/><circle cx="13.6" cy="21.6" r=".8"/></g>
+        <rect x="-14" y="-2.4" width="26" height="3" rx="1.5" fill="#fff" opacity=".5" filter="url(#soft)"/>
+        <g data-limb="legN" data-p="5 22">
+          <rect x="2" y="20" width="6" height="11" rx="2.5" fill="url(#robLimb)"/>
+          <circle cx="5" cy="31" r="3" fill="url(#robJoint)"/>
+          <rect x="2.5" y="31" width="5" height="6.5" rx="2" fill="url(#robLimb)"/>
+          <rect x="-0.5" y="36.4" width="13" height="3.9" rx="1.8" fill="#6b7586"/>
+          <circle cx="5" cy="22" r="3.2" fill="url(#robJoint)"/>
+        </g>
+        <path class="ln" d="M 7 -36 L 7 -43.5" stroke="#8a95a6" stroke-width="1.8"/>
+        <circle class="beacon" cx="7" cy="-46" r="4.5" fill="#ff5a4a" opacity=".55" filter="url(#glow)"/>
+        <circle cx="7" cy="-46" r="2.6" fill="#ff6a5a"/>
+        <circle cx="6.2" cy="-46.8" r=".8" fill="#fff" opacity=".7"/>
+        <rect x="-13" y="-36" width="41" height="27.5" rx="9" fill="url(#robBody)" stroke="#5e6878" stroke-width=".8"/>
+        <rect x="-8" y="-35" width="28" height="3" rx="1.5" fill="#fff" opacity=".55" filter="url(#soft)"/>
+        <circle cx="-6" cy="-22" r="5.2" fill="url(#robLimb)" stroke="#5e6878" stroke-width=".6"/>
+        <circle cx="-6" cy="-22" r="2.4" fill="url(#robJoint)"/>
+        <rect x="-1" y="-31.5" width="27" height="19" rx="6" fill="url(#robVisor)" stroke="#3a4350" stroke-width=".8"/>
+        <path d="M 1 -29.5 L 8 -29.5 L 1 -17 Z" fill="#fff" opacity=".1"/>
+        <g class="eo">
+          <g filter="url(#glow)" opacity=".9"><rect x="6.4" y="-26.4" width="5" height="8" rx="2.5" fill="#5ff2ff"/><rect x="16.8" y="-26" width="4.4" height="7.4" rx="2.2" fill="#5ff2ff"/></g>
+          <rect x="6.4" y="-26.4" width="5" height="8" rx="2.5" fill="#c4fbff"/>
+          <rect x="16.8" y="-26" width="4.4" height="7.4" rx="2.2" fill="#c4fbff"/>
+        </g>
+        <g class="es ln" stroke="#7af4ff" stroke-width="1.4"><path d="M 6 -21.6 Q 8.9 -19.8 11.8 -21.6"/><path d="M 16.5 -21.6 Q 19 -20 21.5 -21.6"/></g>
+        <g class="ex ln" stroke="#ff6a6a" stroke-width="1.4"><path d="M 6.6 -25 L 11.4 -19.6 M 11.4 -25 L 6.6 -19.6 M 16.8 -24.8 L 21.2 -19.8 M 21.2 -24.8 L 16.8 -19.8"/></g>
+        <g class="ln" stroke="#7af4ff" stroke-width="1.1">
+          <path data-states="calm" d="M 10.5 -15.6 L 18 -15.6"/>
+          <path data-states="done" d="M 10 -16.6 Q 14.2 -12.8 18.4 -16.6"/>
+          <ellipse data-states="waiting" cx="14.2" cy="-15.4" rx="1.6" ry="1.3"/>
+          <path data-states="error" stroke="#ff6a6a" d="M 10 -14.8 L 12 -16.4 L 14 -14.8 L 16 -16.4 L 18 -14.8"/>
+        </g>
+        <g data-limb="armN" data-p="13 3">
+          <rect x="10.6" y="3" width="5" height="9.5" rx="2.2" fill="url(#robLimb)"/>
+          <circle cx="13" cy="12.6" r="2.6" fill="url(#robJoint)"/>
+          <rect x="10.8" y="12.6" width="4.4" height="6.6" rx="2" fill="url(#robLimb)"/>
+          <rect x="10.2" y="18.4" width="5.6" height="2.4" rx="1" fill="#4d5665"/>
+          <path d="M 10.6 20.4 L 9.8 24.2 L 11.6 24.4 L 12.4 21 Z M 15.4 20.4 L 16.2 24.2 L 14.4 24.4 L 13.6 21 Z" fill="#5d6676"/>
+          <circle cx="13" cy="3" r="4.2" fill="url(#robLimb)" stroke="#5e6878" stroke-width=".6"/>
+        </g>
       </g>
+
+      <!-- cat: a grey tabby -->
+      <g id="body-cat" style="display:none">
+        <g data-limb="qff" data-p="13 16" fill="url(#catFar)">
+          <path d="M 9 13 C 8.6 19, 9.2 25, 9.8 31 L 10 36.8 Q 10 40.3 13 40.3 L 16.8 40.3 Q 18.6 40.1 17.4 38.2 L 16.6 36.5 C 16.6 31, 17.4 25, 17.8 19 C 18 14, 15.8 11, 13.2 11 C 10.8 11, 9.1 11.6, 9 13 Z"/>
+        </g>
+        <g data-limb="qbf" data-p="-29 16" fill="url(#catFar)">
+          <path d="M -36 12 C -38.5 18, -37.6 26, -34.6 31 L -33.6 36.8 Q -33.6 40.3 -30.6 40.3 L -26.8 40.3 Q -25 40.1 -26.2 38.2 L -27 36.4 L -27.4 31 C -25.6 26, -23.6 20, -24.4 14 C -25 10.4, -28 9.6, -31 9.8 C -33.6 10, -35.4 10.8, -36 12 Z"/>
+        </g>
+        <g data-limb="tail" data-p="-35 8">
+          <path class="ln" d="M -35 8 C -46 6, -51 -4, -48 -15 C -46.5 -21, -43 -24, -40 -28" stroke="#8f9399" stroke-width="6" filter="url(#fur)"/>
+          <path d="M -35 8 C -46 6, -51 -4, -48 -15 C -46.5 -21, -43 -24, -40 -28" fill="none" stroke="#565a61" stroke-width="6.2" stroke-dasharray="2.6 4.4" opacity=".75"/>
+        </g>
+        <g data-limb="qbn" data-p="-23 16" fill="url(#catFur)">
+          <path d="M -30 12 C -32.5 18, -31.6 26, -28.6 31 L -27.6 36.8 Q -27.6 40.3 -24.6 40.3 L -20.8 40.3 Q -19 40.1 -20.2 38.2 L -21 36.4 L -21.4 31 C -19.6 26, -17.6 20, -18.4 14 C -19 10.4, -22 9.6, -25 9.8 C -27.6 10, -29.4 10.8, -30 12 Z"/>
+          <path d="M -27.8 35.6 L -27.6 36.8 Q -27.6 40.3 -24.6 40.3 L -20.8 40.3 Q -19 40.1 -20.2 38.2 L -21 36.4 L -21 35.6 Z" fill="#f1efe9"/>
+          <path class="ln" d="M -29 22 Q -30.5 27 -28.5 30" stroke="#565a61" stroke-width="1.6" opacity=".6"/>
+        </g>
+        <g data-limb="qfn" data-p="19 16" fill="url(#catFur)">
+          <path d="M 15 13 C 14.6 19, 15.2 25, 15.8 31 L 16 36.8 Q 16 40.3 19 40.3 L 22.8 40.3 Q 24.6 40.1 23.4 38.2 L 22.6 36.5 C 22.6 31, 23.4 25, 23.8 19 C 24 14, 21.8 11, 19.2 11 C 16.8 11, 15.1 11.6, 15 13 Z"/>
+          <path d="M 15.95 35.4 L 16 36.8 Q 16 40.3 19 40.3 L 22.8 40.3 Q 24.6 40.1 23.4 38.2 L 22.6 36.5 L 22.6 35.4 Z" fill="#f1efe9"/>
+          <path class="ln" d="M 20.4 38.6 L 20.6 40.2 M 22.2 38.5 L 22.5 40.1" stroke="#b9b6ae" stroke-width=".5"/>
+        </g>
+        <clipPath id="catBodyClip"><path d="M 24 8 C 22 -2, 10 -4, -4 -3 C -18 -2, -32 -3, -38 7 C -42 15, -38 25, -28 26.5 C -16 28, 0 26, 12 25 C 21 24, 26 17, 24 8 Z"/></clipPath>
+        <path filter="url(#fur)" fill="url(#catFur)" d="M 24 8 C 22 -2, 10 -4, -4 -3 C -18 -2, -32 -3, -38 7 C -42 15, -38 25, -28 26.5 C -16 28, 0 26, 12 25 C 21 24, 26 17, 24 8 Z"/>
+        <g clip-path="url(#catBodyClip)">
+          <path class="ln" d="M 2 -4 Q -1 5 2 13 M -7 -4 Q -10 5 -7 14 M -16 -3 Q -19 6 -16 15 M -25 -2 Q -28 7 -25 16 M -33 2 Q -36 10 -33 18" stroke="#565a61" stroke-width="2.4" opacity=".7"/>
+          <ellipse cx="19" cy="15" rx="7" ry="11" fill="#f1efe9" filter="url(#fur)"/>
+          <ellipse cx="-5" cy="30" rx="34" ry="6" fill="#000" opacity=".18" filter="url(#soft)"/>
+          <path class="ln" d="M -17 26 C -15 18, -19 9, -29 6.5 M 13.5 24 C 12.5 16, 15 9.5, 20 6.5" stroke="#5e6168" stroke-width="1" opacity=".45"/>
+        </g>
+        <path d="M 17 -15 C 16 -22, 16.5 -29, 18.5 -34.5 C 22.5 -30.5, 26.5 -25.5, 28 -20 Z" fill="url(#catFur)"/>
+        <path d="M 19 -18.5 C 18.6 -23, 19 -27.5, 19.9 -30.5 C 22.4 -27.6, 24.5 -24.5, 25.4 -21 Z" fill="url(#catEarIn)"/>
+        <path d="M 31 -20.5 C 34 -26, 37.5 -30.5, 41.5 -33 C 42.5 -27, 42.2 -20.5, 40.5 -15.5 Z" fill="url(#catFur)"/>
+        <path d="M 33.4 -20.4 C 35.6 -24.4, 38.2 -27.6, 40.3 -29.4 C 40.7 -25.2, 40.5 -21.2, 39.5 -18 Z" fill="url(#catEarIn)"/>
+        <path filter="url(#fur)" fill="url(#catFur)" d="M 16 -10 C 16 -19, 22 -23, 29.5 -23 C 37.5 -23, 43 -18, 43.5 -10 C 44 -3, 40.5 2, 35 3.5 C 31 4.5, 26 4.5, 22 3 C 17.5 1, 16 -4, 16 -10 Z"/>
+        <path class="ln" d="M 26.5 -22 L 27.3 -17.5 M 29.8 -22.6 L 30 -18 M 33 -22 L 32.2 -17.6 M 17.5 -7 Q 20.5 -6 23 -4 M 17.8 -3.5 Q 20.5 -2.5 22.5 -0.5" stroke="#565a61" stroke-width="1.3" opacity=".75"/>
+        <path filter="url(#fur)" fill="#f3f1ec" d="M 32.5 -6.5 C 34.5 -9.5, 42 -9.5, 43.6 -5.5 C 44.4 -1.5, 41.5 2.8, 37.5 3.2 C 33.5 3.4, 31 -2, 32.5 -6.5 Z"/>
+        <g class="eo">
+          <path d="M 22.4 -11 Q 26.4 -15.6 30.8 -11.6 Q 26.4 -7.4 22.4 -11 Z" fill="url(#catIris)" stroke="#2b2b2b" stroke-width=".9"/>
+          <ellipse cx="26.9" cy="-11.3" rx=".9" ry="2.9" fill="#111"/>
+          <circle cx="27.9" cy="-12.9" r=".85" fill="#fff"/>
+          <path d="M 33.2 -11.6 Q 35.9 -14.8 38.5 -12 Q 35.8 -9.1 33.2 -11.6 Z" fill="url(#catIris)" stroke="#2b2b2b" stroke-width=".8"/>
+          <ellipse cx="36.1" cy="-11.8" rx=".7" ry="2.2" fill="#111"/>
+          <circle cx="36.8" cy="-13" r=".65" fill="#fff"/>
+        </g>
+        <g class="es ln" stroke="#2b2b2b" stroke-width="1.1"><path d="M 22.4 -11.4 Q 26.4 -8.6 30.8 -11.4"/><path d="M 33.2 -11.8 Q 35.9 -9.8 38.5 -12"/></g>
+        <g class="ex ln" stroke="#2b2b2b" stroke-width="1.1"><path d="M 23.2 -13.6 L 29.2 -11.2 L 23.2 -8.8"/><path d="M 38.2 -14 L 33.8 -11.7 L 38.2 -9.4"/></g>
+        <path d="M 38.4 -7.4 L 42.4 -7.6 Q 42 -5 40.4 -4.4 Q 38.8 -5 38.4 -7.4 Z" fill="#d98a94"/>
+        <ellipse cx="40" cy="-6.9" rx="1" ry=".45" fill="#fff" opacity=".6"/>
+        <g class="ln" stroke="#5a4446" stroke-width=".9">
+          <path data-states="calm" d="M 40.4 -4.4 L 40.4 -3 M 37.8 -2.2 Q 39.4 -1.4 40.4 -3 Q 41.4 -1.4 43 -2.4"/>
+          <g data-states="waiting"><path d="M 40.4 -4.4 L 40.4 -3"/><ellipse cx="40.4" cy="-1.2" rx="1.3" ry="1.6" fill="#7a2a33"/></g>
+          <g data-states="done"><path d="M 40.4 -4.4 L 40.4 -3"/><path d="M 37.6 -2.6 Q 40.4 3 43.2 -2.8 Q 40.4 -1.6 37.6 -2.6 Z" fill="#7a2a33"/></g>
+          <path data-states="error" d="M 40.4 -4.4 L 40.4 -3 M 37.8 -0.8 Q 40.4 -3.4 43 -1"/>
+        </g>
+        <path class="ln" d="M 42 -4.6 Q 47 -6.6 53 -6.8 M 42.2 -3.6 Q 47.5 -3.6 53.4 -2.6 M 42 -2.6 Q 47 -1 52 1.6 M 35 -3.4 Q 30 -3.6 26 -2.2 M 35 -2.4 Q 30.5 -1.6 27 0.6" stroke="#fbfbfb" stroke-width=".45" opacity=".85"/>
+      </g>
+
+      <!-- pup: a golden puppy -->
+      <g id="body-pup" style="display:none">
+        <g data-limb="qff" data-p="13 17" fill="url(#pupFar)">
+          <path d="M 8.6 14 C 8.2 20, 8.8 27, 9.4 32 L 9.6 36.4 Q 9.4 40.3 13 40.3 L 17.4 40.3 Q 19.6 40.2 18.6 37.6 L 18 36 C 17.8 30, 18.4 24, 18.6 19 C 18.8 14, 16.4 11.5, 13.6 11.5 C 11 11.5, 8.8 12.4, 8.6 14 Z"/>
+        </g>
+        <g data-limb="qbf" data-p="-29 17" fill="url(#pupFar)">
+          <path d="M -37 13 C -39.4 19, -38.4 27, -35.4 32 L -34.6 36.6 Q -35 40.3 -31.6 40.3 L -27 40.3 Q -25 40.2 -26 37.8 L -26.8 36 L -27.2 31 C -25.4 26, -23.4 20, -24.2 15 C -24.8 11.4, -28 10.4, -31.2 10.6 C -34 10.8, -36.2 11.6, -37 13 Z"/>
+        </g>
+        <g data-limb="tail" data-p="-35 6">
+          <path filter="url(#fur)" fill="url(#pupFur)" d="M -35 9 C -41.5 6, -45.5 -2, -44.5 -12 C -44 -16.5, -40.5 -17.5, -40 -13.5 C -39.4 -7, -36.5 -1, -31 3.5 Z"/>
+          <path filter="url(#fur)" fill="#f2d9b0" opacity=".9" d="M -44.3 -9 C -45.2 -3, -42 3.5, -37 6.5 C -40 2, -42 -3, -42.3 -9 Z"/>
+        </g>
+        <g data-limb="qbn" data-p="-23 17" fill="url(#pupFur)">
+          <path d="M -31 13 C -33.4 19, -32.4 27, -29.4 32 L -28.6 36.6 Q -29 40.3 -25.6 40.3 L -21 40.3 Q -19 40.2 -20 37.8 L -20.8 36 L -21.2 31 C -19.4 26, -17.4 20, -18.2 15 C -18.8 11.4, -22 10.4, -25.2 10.6 C -28 10.8, -30.2 11.6, -31 13 Z"/>
+          <path d="M -28.7 35.5 L -28.6 36.6 Q -29 40.3 -25.6 40.3 L -21 40.3 Q -19 40.2 -20 37.8 L -20.8 36 L -20.8 35.5 Z" fill="#f6e3c4"/>
+        </g>
+        <g data-limb="qfn" data-p="19 17" fill="url(#pupFur)">
+          <path d="M 14.6 14 C 14.2 20, 14.8 27, 15.4 32 L 15.6 36.4 Q 15.4 40.3 19 40.3 L 23.4 40.3 Q 25.6 40.2 24.6 37.6 L 24 36 C 23.8 30, 24.4 24, 24.6 19 C 24.8 14, 22.4 11.5, 19.6 11.5 C 17 11.5, 14.8 12.4, 14.6 14 Z"/>
+          <path d="M 15.5 35 L 15.6 36.4 Q 15.4 40.3 19 40.3 L 23.4 40.3 Q 25.6 40.2 24.6 37.6 L 24 36 L 24 35 Z" fill="#f6e3c4"/>
+          <path class="ln" d="M 21 38.4 L 21 40 M 23 38.2 L 23.2 40" stroke="#b9936a" stroke-width=".6"/>
+        </g>
+        <clipPath id="pupBodyClip"><path d="M 23 9 C 22 -2, 8 -4, -6 -3 C -20 -2, -33 -1, -37 9 C -40 17, -36 26, -27 27.5 C -15 29, 0 27.5, 12 26.5 C 20 25.5, 24.5 18, 23 9 Z"/></clipPath>
+        <path filter="url(#fur)" fill="url(#pupFur)" d="M 23 9 C 22 -2, 8 -4, -6 -3 C -20 -2, -33 -1, -37 9 C -40 17, -36 26, -27 27.5 C -15 29, 0 27.5, 12 26.5 C 20 25.5, 24.5 18, 23 9 Z"/>
+        <g clip-path="url(#pupBodyClip)">
+          <ellipse cx="18" cy="16" rx="8" ry="12" fill="#f6e3c4" filter="url(#fur)"/>
+          <ellipse cx="-6" cy="31" rx="34" ry="6" fill="#5a2e0e" opacity=".22" filter="url(#soft)"/>
+          <path class="ln" d="M -17 27 C -15 19, -19 10, -29 7.5 M 12.5 25 C 11.5 17, 14 10.5, 19 7.5" stroke="#9a5a26" stroke-width="1" opacity=".45"/>
+        </g>
+        <path d="M 34.5 -22 C 39 -23.5, 42.5 -19.5, 42.5 -14.5 C 40.6 -16.4, 37.6 -19, 34.5 -20 Z" fill="url(#pupEar)"/>
+        <path filter="url(#fur)" fill="url(#pupFur)" d="M 16 -9 C 16 -19, 22 -23.5, 29 -23.5 C 36.5 -23.5, 41.5 -18.5, 41.5 -11 C 41.5 -4, 37 1.5, 30 2.5 C 23 3.5, 16 0, 16 -9 Z"/>
+        <path filter="url(#fur)" fill="#f6e3c4" d="M 31 -6.5 C 33 -10, 41 -11, 45.5 -8 C 48.5 -6, 48 -1, 45 1 C 41.5 3.5, 34.5 3.5, 31.5 0.5 C 30 -1.5, 30 -4.5, 31 -6.5 Z"/>
+        <path d="M 17.5 1.8 C 22 5.6, 28 6, 33 2.5 L 33.4 6.2 C 28 9.8, 21.5 9.4, 17.2 5.6 Z" fill="#c8352b"/>
+        <path class="ln" d="M 17.6 2.6 C 22 6.2, 28 6.6, 33.1 3.2" stroke="#e86a5a" stroke-width=".6"/>
+        <circle cx="25.5" cy="9.6" r="2.3" fill="#e5b93a" stroke="#a8801f" stroke-width=".6"/>
+        <path class="ln" d="M 24.6 -16.6 Q 27.4 -18 30 -16.4 M 34.6 -17 Q 36.6 -18 38.6 -16.6" stroke="#9a6030" stroke-width="1" opacity=".7"/>
+        <g class="eo">
+          <circle cx="27.5" cy="-12" r="3.3" fill="url(#pupIris)" stroke="#1a0d06" stroke-width=".7"/>
+          <circle cx="27.7" cy="-11.8" r="1.6" fill="#0d0705"/>
+          <circle cx="28.7" cy="-13.3" r="1.05" fill="#fff"/>
+          <circle cx="26.5" cy="-10.6" r=".45" fill="#fff" opacity=".7"/>
+          <circle cx="36.6" cy="-12.6" r="2.6" fill="url(#pupIris)" stroke="#1a0d06" stroke-width=".6"/>
+          <circle cx="36.8" cy="-12.4" r="1.25" fill="#0d0705"/>
+          <circle cx="37.5" cy="-13.6" r=".8" fill="#fff"/>
+        </g>
+        <g class="es ln" stroke="#3a2416" stroke-width="1.1"><path d="M 24.4 -12 Q 27.5 -9.4 30.6 -12"/><path d="M 34.2 -12.6 Q 36.6 -10.6 39 -12.6"/></g>
+        <g class="ex ln" stroke="#3a2416" stroke-width="1.1"><path d="M 25 -14.4 L 30 -12 L 25 -9.6"/><path d="M 38.8 -14.8 L 34.6 -12.6 L 38.8 -10.4"/></g>
+        <path d="M 43.2 -9.6 C 45.3 -10.6, 48.4 -10.2, 48.6 -8 C 48.8 -6, 46.6 -4.6, 45.3 -4.8 C 43.6 -5, 42.4 -8.6, 43.2 -9.6 Z" fill="#1e1a18"/>
+        <ellipse cx="46" cy="-8.8" rx="1.3" ry=".6" fill="#fff" opacity=".55"/>
+        <g class="ln" stroke="#3a2416" stroke-width="1">
+          <path data-states="calm" d="M 45.3 -4.8 L 45.2 -2.4 C 44 -0.6, 41 0, 38.6 -1.4 M 45.2 -2.4 C 46 -1.2, 47.2 -1.2, 48 -1.8"/>
+          <g data-states="done">
+            <path d="M 45.3 -4.8 L 45.2 -2.4"/>
+            <path d="M 38.2 -1.6 C 40.4 4.6, 46 4.6, 47.8 -1.6 C 44.6 -0.2, 41.4 -0.2, 38.2 -1.6 Z" fill="#5a1f1a"/>
+            <path d="M 40.6 1 C 40.4 6.6, 41.8 8.8, 43.4 8.8 C 45.2 8.8, 46 6.6, 45.6 1.4 Z" fill="#e8737f" stroke="#c4505c" stroke-width=".6"/>
+            <path d="M 43.1 2.4 L 43.2 6.6" stroke="#c4505c" stroke-width=".6"/>
+          </g>
+          <g data-states="waiting"><path d="M 45.3 -4.8 L 45.2 -2.4"/><ellipse cx="43.6" cy="0.6" rx="1.6" ry="2" fill="#5a1f1a"/></g>
+          <path data-states="error" d="M 45.3 -4.8 L 45.2 -2.4 M 39 0.8 C 41 -1.8, 44 -2, 47.6 0.4"/>
+        </g>
+        <g data-limb="ear" data-p="20 -19">
+          <path filter="url(#fur)" fill="url(#pupEar)" d="M 20.5 -21 C 14 -21.5, 10.5 -13, 11.5 -3 C 12 2, 17 3.5, 19.5 -0.5 C 22 -6, 24 -14, 20.5 -21 Z"/>
+        </g>
+      </g>
+
+      <!-- turtle: a tortoise -->
+      <g id="body-turtle" style="display:none">
+        <g data-limb="qff" data-p="12 17" fill="url(#ttFar)"><path d="M 7 15 C 6.5 24, 7 32, 8 37.5 C 8.5 40.2, 11 40.3, 14 40.3 L 17 40.3 C 19 40.2, 19.5 38.5, 18.5 37 C 17.5 31, 17.5 23, 17 15 Z"/></g>
+        <g data-limb="qbf" data-p="-28 17" fill="url(#ttFar)"><path d="M -33 15 C -33.5 24, -33 32, -32 37.5 C -31.5 40.2, -29 40.3, -26 40.3 L -23 40.3 C -21 40.2, -20.5 38.5, -21.5 37 C -22.5 31, -22.5 23, -23 15 Z"/></g>
+        <path d="M -36 19 C -40 20, -43 22, -45 25 C -41 25, -38 24.5, -35 23.5 Z" fill="url(#ttSkin)"/>
+        <path fill="url(#ttSkin)" d="M 20 8 C 28 5, 34 2, 39 1 L 43 12 C 37 14, 30 18, 23 21 Z"/>
+        <path class="ln" d="M 27 7 Q 30 11 29 16 M 32 5 Q 35 9 34 13" stroke="#56633a" stroke-width=".8" opacity=".6"/>
+        <g data-limb="qbn" data-p="-22 17" fill="url(#ttSkin)">
+          <path d="M -27 15 C -27.5 24, -27 32, -26 37.5 C -25.5 40.2, -23 40.3, -20 40.3 L -17 40.3 C -15 40.2, -14.5 38.5, -15.5 37 C -16.5 31, -16.5 23, -17 15 Z"/>
+          <g fill="#56633a" opacity=".45"><circle cx="-23" cy="29" r="1"/><circle cx="-20" cy="32" r=".9"/><circle cx="-23.5" cy="34" r=".9"/></g>
+          <path class="ln" d="M -16.6 39.4 L -14.8 40.3 M -19 39.6 L -17.6 40.4" stroke="#e9e2c4" stroke-width=".9"/>
+        </g>
+        <g data-limb="qfn" data-p="18 17" fill="url(#ttSkin)">
+          <path d="M 13 15 C 12.5 24, 13 32, 14 37.5 C 14.5 40.2, 17 40.3, 20 40.3 L 23 40.3 C 25 40.2, 25.5 38.5, 24.5 37 C 23.5 31, 23.5 23, 23 15 Z"/>
+          <g fill="#56633a" opacity=".45"><circle cx="17" cy="29" r="1"/><circle cx="20" cy="32" r=".9"/><circle cx="16.5" cy="34" r=".9"/></g>
+          <path class="ln" d="M 23.4 39.4 L 25.2 40.3 M 21 39.6 L 22.4 40.4" stroke="#e9e2c4" stroke-width=".9"/>
+        </g>
+        <path d="M -38 24 C -38 6, -24 -9, -4 -9 C 16 -9, 31 5, 31 24 Z" fill="url(#ttShell)" stroke="#3a3010" stroke-width="1"/>
+        <g fill="url(#ttScute)">
+          <ellipse cx="-21" cy="-2.5" rx="7" ry="4"/><ellipse cx="-4" cy="-4.5" rx="7" ry="3.6"/><ellipse cx="11.5" cy="-2.4" rx="6" ry="3.6"/>
+          <ellipse cx="-27" cy="10" rx="6" ry="5"/><ellipse cx="-12" cy="9" rx="7" ry="5"/><ellipse cx="4" cy="8.5" rx="7" ry="5"/><ellipse cx="19.5" cy="10.5" rx="6" ry="5"/>
+        </g>
+        <path class="ln" stroke="#3a3010" stroke-width="1.3" d="M -37.6 18.6 C -24 16.6, 16 16.6, 30.6 18.6 M -31 4.5 C -20 -1.5, 12 -1.5, 26 5 M -13 -8.4 L -12.6 0 M 4 -8.8 L 4 -0.8 M -19.5 1 L -21 17.4 M -4 -0.5 L -4.4 17 M 11.5 0.6 L 12.2 17.1 M -31 18 L -31.5 23.8 M -24 17.3 L -24.2 24 M -17 17 L -17 24 M -10 16.9 L -10 24 M -3 16.8 L -3 24 M 4 16.8 L 4 24 M 11 16.9 L 11 24 M 18 17.2 L 18 24 M 25 17.8 L 25.2 24"/>
+        <path class="ln" d="M -30 2 C -22 -6, -10 -8.4, 0 -8.4" stroke="#f3e2a0" stroke-width="1.2" opacity=".5" filter="url(#soft)"/>
+        <path d="M -36 23.6 L 29.4 23.6 C 28 26.6, -34 26.6, -36 23.6 Z" fill="#d8c48a" stroke="#8f7c3c" stroke-width=".6"/>
+        <path fill="url(#ttSkin)" d="M 37 3 C 39 -3, 47 -5, 51 -1 C 54 2, 53.5 8, 50 11 C 47 13.5, 42 13.5, 39.5 11 C 37 8.5, 36.4 5.5, 37 3 Z"/>
+        <g fill="#56633a" opacity=".45"><circle cx="41" cy="0" r=".9"/><circle cx="44" cy="-2" r=".8"/><circle cx="39.4" cy="5" r=".8"/><circle cx="41.6" cy="10" r=".8"/></g>
+        <g class="eo"><circle cx="45.6" cy="1.8" r="2.3" fill="#1c1a12"/><circle cx="46.3" cy="1" r=".8" fill="#fff"/><path class="ln" d="M 43 0.4 Q 45.6 -1.6 48.2 0.4" stroke="#3e4826" stroke-width="1"/></g>
+        <g class="es ln" stroke="#2a2a1a" stroke-width="1.1"><path d="M 43.2 1.8 Q 45.6 3.8 48 1.8"/></g>
+        <g class="ex ln" stroke="#2a2a1a" stroke-width="1.1"><path d="M 43.4 -0.4 L 47.8 1.8 L 43.4 4"/></g>
+        <circle cx="52.3" cy="1.6" r=".55" fill="#2a2a1a"/>
+        <g class="ln" stroke="#2a2a1a" stroke-width="1">
+          <path data-states="calm" d="M 53 6 C 50.5 8.4, 46.5 9, 43 8"/>
+          <path data-states="done" d="M 53 5.4 C 50 10, 45 10.4, 42.4 7"/>
+          <g data-states="waiting"><path d="M 53 6.4 C 51.6 7.4, 50.4 7.8, 49 8"/><ellipse cx="47.6" cy="8.2" rx="1.3" ry="1.1" fill="#3a1a14"/></g>
+          <path data-states="error" d="M 53 7.6 C 50.5 6.6, 46.5 7, 43 8.6"/>
+        </g>
+      </g>
+
+      <!-- snail: a garden snail -->
       <g id="body-snail" style="display:none">
-        <ellipse cx="8" cy="22" rx="36" ry="11" fill="#b9c97a"/>
-        <circle cx="30" cy="8" r="15" fill="#b9c97a"/>
-        <circle cx="-14" cy="0" r="23" fill="#c98d5a" stroke="#a56f3f" stroke-width="1.5"/>
-        <circle cx="-14" cy="0" r="14" fill="none" stroke="#a56f3f" stroke-width="2.5"/>
-        <circle cx="-14" cy="0" r="6" fill="none" stroke="#a56f3f" stroke-width="2.5"/>
+        <path fill="url(#snSkin)" d="M -44 40 C -44 35, -38 33, -26 33 L 18 32 C 22 24, 27 15, 35 13 C 43 11, 49 17, 49 25 C 49 31, 47 36, 44 38.5 C 42 40, 38 40.2, 34 40.2 Z"/>
+        <g fill="#7d6b56" opacity=".4">
+          <ellipse cx="-34" cy="36.4" rx="2" ry="1"/><ellipse cx="-26" cy="35.6" rx="2.2" ry="1"/><ellipse cx="22" cy="35" rx="2" ry="1"/>
+          <ellipse cx="30" cy="34" rx="2" ry="1"/><ellipse cx="27" cy="25" rx="1.6" ry="1"/><ellipse cx="33" cy="20" rx="1.6" ry="1"/>
+          <ellipse cx="38" cy="28" rx="1.8" ry="1"/><ellipse cx="40" cy="20" rx="1.4" ry=".9"/><ellipse cx="37" cy="35.5" rx="2" ry="1"/>
+        </g>
+        <path class="ln" d="M -42 39.2 L 42 39.2" stroke="#ece2cc" stroke-width=".8" opacity=".6"/>
+        <path class="ln" d="M 24 22 C 28 16, 33 13.8, 39 13.6" stroke="#fff" stroke-width="1.4" opacity=".55" filter="url(#soft)"/>
+        <path d="M 12.6 10 A 17.6 17.6 0 0 0 -22.6 10 A 21.2 21.2 0 0 0 19.8 10 Z" fill="url(#snShell)" stroke="#4a2a10" stroke-width="1"/>
+        <path class="ln" d="M -3.6 10 A 1.4 1.4 0 0 0 -6.4 10 A 5 5 0 0 0 3.6 10 A 8.6 8.6 0 0 0 -13.6 10 A 12.2 12.2 0 0 0 10.8 10 A 15.8 15.8 0 0 0 -20.8 10" stroke="#6a3a14" stroke-width="3.4" opacity=".35"/>
+        <path class="ln" d="M -3.6 10 A 1.4 1.4 0 0 0 -6.4 10 A 5 5 0 0 0 3.6 10 A 8.6 8.6 0 0 0 -13.6 10 A 12.2 12.2 0 0 0 10.8 10 A 15.8 15.8 0 0 0 -20.8 10" stroke="#4a2408" stroke-width="1.1"/>
+        <ellipse cx="-11" cy="-1" rx="8" ry="3.6" transform="rotate(-30 -11 -1)" fill="#fff" opacity=".4" filter="url(#soft)"/>
+        <g class="eo">
+          <path class="ln" d="M 37 15 C 37.5 8, 39 2, 41 -2" stroke="#9a876c" stroke-width="2.3"/>
+          <circle cx="41.3" cy="-3" r="2.1" fill="#3a2e22"/>
+          <path class="ln" d="M 41.5 15 C 43 8, 45.5 2, 48.6 -1.6" stroke="#b9a68a" stroke-width="2.7"/>
+          <circle cx="49" cy="-2.6" r="2.5" fill="#2a2018"/>
+          <circle cx="49.8" cy="-3.4" r=".85" fill="#fff"/>
+        </g>
+        <g class="es">
+          <path class="ln" d="M 37 15 L 37.8 10.5" stroke="#9a876c" stroke-width="2.3"/><circle cx="37.9" cy="10" r="1.4" fill="#3a2e22"/>
+          <path class="ln" d="M 41.5 15 L 43 10" stroke="#b9a68a" stroke-width="2.7"/><circle cx="43.2" cy="9.6" r="1.6" fill="#2a2018"/>
+        </g>
+        <g class="ex">
+          <path class="ln" d="M 37 15 C 38 8, 42 6, 44 9" stroke="#9a876c" stroke-width="2.3"/><circle cx="44.3" cy="9.8" r="1.8" fill="#3a2e22"/>
+          <path class="ln" d="M 41.5 15 C 44 8, 49 7, 51.5 11" stroke="#b9a68a" stroke-width="2.7"/><circle cx="51.8" cy="12" r="2.1" fill="#2a2018"/>
+        </g>
+        <path class="ln" d="M 46.4 25 C 49 25.6, 51 27, 52 29" stroke="#b9a68a" stroke-width="1.8"/>
+        <g class="ln" stroke="#4a3a2a" stroke-width="1">
+          <path data-states="calm" d="M 44 30 Q 45.8 31.6 47.6 30"/>
+          <path data-states="done" d="M 43.6 29.6 Q 45.8 34 48 29.4 Z" fill="#5a2a1a"/>
+          <ellipse data-states="waiting" cx="45.8" cy="31" rx="1.1" ry="1.3" fill="#5a2a1a"/>
+          <path data-states="error" d="M 44 31.4 Q 45.8 29.8 47.6 31.2"/>
+        </g>
       </g>
-      <!-- near limbs: drawn in front of the body -->
-      <g id="limbsFront" fill="#d99347">
-        <g id="legN"><rect x="2" y="20" width="8" height="16" rx="4"/></g>
-        <g id="qfn"><rect x="12" y="22" width="7" height="16" rx="3.5"/></g>
-        <g id="qbn"><rect x="-16" y="22" width="7" height="16" rx="3.5"/></g>
-        <g id="armN"><rect x="13" y="2" width="7" height="18" rx="3.5"/></g>
-        <g id="wingN"><ellipse cx="4" cy="-20" rx="17" ry="7" fill="#ffffff" fill-opacity=".8" stroke="#c9d3e3" stroke-width="1.2"/></g>
-        <g id="dwingN"><path d="M -6 -4 L -30 -44 L -44 -20 L -48 -2 L -34 6 Z" fill="#3f7a50" stroke="#2f5e3c" stroke-width="1.5"/></g>
+
+      <!-- bee: a honeybee -->
+      <g id="body-bee" style="display:none">
+        <g data-limb="wingF" data-p="0 -2" opacity=".6">
+          <g transform="rotate(-8 0 -2)">
+            <path d="M 1 -2 C -4 -15, -15 -30, -28 -33 C -35 -34, -37 -27, -32 -21 C -25 -12, -12 -4, 1 -2 Z" fill="url(#beeWing)" stroke="#7d889c" stroke-width=".6"/>
+            <path d="M -1 0 C -8 -5, -19 -10, -26 -9.5 C -30.5 -9, -29.5 -4, -23 -2.5 C -15 -0.5, -7 0.5, -1 0 Z" fill="url(#beeWing)" stroke="#7d889c" stroke-width=".6"/>
+          </g>
+        </g>
+        <g data-limb="dangleF" data-p="3 18" class="ln" stroke="#4a3524" stroke-width="1.6">
+          <path d="M 10 16 L 15.5 23.5 L 15 31.5 L 17 39.5"/>
+          <path d="M 4 18 L 6.5 27 L 5 34 L 6 40"/>
+          <path d="M -3 17 L -8.5 25 L -6.5 33 L -8.5 40"/>
+        </g>
+        <g transform="translate(-19 13) rotate(-18)">
+          <clipPath id="beeAbdClip"><ellipse rx="20" ry="14.5"/></clipPath>
+          <path d="M -19.5 -1.4 L -27 0.9 L -19.5 2.4 Z" fill="#2a1a0e"/>
+          <ellipse rx="20" ry="14.5" fill="url(#beeAbd)"/>
+          <g clip-path="url(#beeAbdClip)">
+            <ellipse cx="18.5" rx="4" ry="9" fill="#8a5212" opacity=".55"/>
+            <path class="ln" d="M 7 -16 Q 4 0 7 16 M -2.5 -16 Q -5.5 0 -2.5 16 M -12 -16 Q -15 0 -12 16" stroke="url(#beeBand)" stroke-width="4.8"/>
+            <ellipse cx="-21" rx="4.5" ry="9" fill="#2a1a0e"/>
+            <ellipse cy="13" rx="22" ry="5" fill="#000" opacity=".18" filter="url(#soft)"/>
+          </g>
+          <ellipse rx="20" ry="14.5" fill="none" stroke="#ffe6a0" stroke-width="1.3" stroke-dasharray=".4 1.1" opacity=".75"/>
+          <ellipse cx="1" cy="-8.5" rx="10" ry="3" fill="#fff" opacity=".45" filter="url(#soft)"/>
+        </g>
+        <circle cx="3" cy="8" r="12.5" fill="url(#beeThx)" filter="url(#fur)"/>
+        <circle cx="3" cy="8" r="12.3" fill="none" stroke="#f6cf78" stroke-width="2.6" stroke-dasharray=".5 1.2" opacity=".8"/>
+        <ellipse cx="1" cy="1.5" rx="6.5" ry="3" fill="#fff3c8" opacity=".45" filter="url(#soft)"/>
+        <g data-limb="dangle" data-p="3 18">
+          <g class="ln" stroke="#24160b" stroke-width="1.9">
+            <path d="M 12 15 L 17.5 23 L 17 31 L 19.5 39.5"/>
+            <path d="M 5 19 L 7.5 28 L 6 35 L 7.5 40"/>
+            <path d="M -2 18 L -8 26 L -6.5 34 L -9.5 40"/>
+          </g>
+          <ellipse cx="-7.2" cy="29.5" rx="2.9" ry="3.9" fill="url(#pollen)" transform="rotate(10 -7.2 29.5)"/>
+        </g>
+        <path class="ln" data-limb="antF" data-p="19 -1" d="M 19 -1 L 18.5 -9.5 Q 21 -15.5 27 -17.5" stroke="#3d2c1c" stroke-width="1.4"/>
+        <g transform="rotate(12 20 8)">
+          <ellipse cx="20" cy="8" rx="9.6" ry="10.8" fill="url(#beeHead)"/>
+          <ellipse cx="26" cy="11" rx="3.6" ry="6" fill="#d6a24e" opacity=".5" filter="url(#fur)"/>
+        </g>
+        <g transform="rotate(-12 19 5.5)">
+          <clipPath id="beeEyeClip"><ellipse cx="19" cy="5.5" rx="5.4" ry="7.6"/></clipPath>
+          <ellipse cx="19" cy="5.5" rx="5.4" ry="7.6" fill="url(#beeEye)"/>
+          <path class="ln" d="M 14.5 8 Q 17 13.5 22.5 12" stroke="#7d8db0" stroke-width=".8" opacity=".55"/>
+          <g class="eo">
+            <ellipse cx="17.6" cy="1.8" rx="1.8" ry="2.5" fill="#fff" opacity=".95"/>
+            <circle cx="20.8" cy="9.4" r=".8" fill="#fff" opacity=".5"/>
+          </g>
+          <g class="es" clip-path="url(#beeEyeClip)">
+            <rect x="12" y="-3" width="15" height="17" fill="#5a3c1e"/>
+            <path class="ln" d="M 14 6.5 Q 19 10.5 24 6.5" stroke="#e2b356" stroke-width="1"/>
+          </g>
+          <g class="ex" clip-path="url(#beeEyeClip)">
+            <path d="M 12 -3 L 27 -3 L 27 4 L 12 8 Z" fill="#5a3c1e"/>
+            <path class="ln" d="M 13.5 7.7 L 24.5 4.2" stroke="#e2b356" stroke-width="1"/>
+          </g>
+        </g>
+        <g class="ln" stroke="#2a160a" stroke-width="1.1">
+          <path data-states="calm" d="M 22.6 15.4 Q 24.6 17 26.6 15"/>
+          <path data-states="done" d="M 22.2 14.8 Q 24.8 19.6 27.4 14.4 Z" fill="#5a1e12"/>
+          <ellipse data-states="waiting" cx="24.8" cy="16" rx="1.2" ry="1.5" fill="#5a1e12"/>
+          <path data-states="error" d="M 22.6 16.8 Q 24.6 15 26.6 16.6"/>
+        </g>
+        <g data-limb="antN" data-p="22.5 -1">
+          <path class="ln" d="M 22.5 -1 L 24 -10 Q 27.5 -15 33.5 -15.4" stroke="#1d130b" stroke-width="1.6"/>
+          <ellipse cx="33.6" cy="-15.4" rx="1.6" ry="1.1" fill="#1d130b"/>
+        </g>
+        <g data-limb="wingN" data-p="0 -2">
+          <path d="M -1 0 C -8 -5, -19 -10, -26 -9.5 C -30.5 -9, -29.5 -4, -23 -2.5 C -15 -0.5, -7 0.5, -1 0 Z" fill="url(#beeWing)" stroke="#6f7a8e" stroke-width=".7"/>
+          <path d="M 1 -2 C -4 -15, -15 -30, -28 -33 C -35 -34, -37 -27, -32 -21 C -25 -12, -12 -4, 1 -2 Z" fill="url(#beeWing)" stroke="#6f7a8e" stroke-width=".7"/>
+          <path class="ln" d="M 1 -2 C -6 -14, -16 -27, -28 -31.5 M -3 -7 C -10 -12, -19 -18, -28 -22 M -9 -14 L -16 -15.5 L -21 -23 M -6 -2 L -17 -6 L -24 -6" stroke="#6f7a8e" stroke-width=".5" opacity=".8"/>
+        </g>
       </g>
-      <!-- ¾ face, positioned on each character's head via C.face -->
-      <g id="face">
-        <circle class="cheek" cx="9" cy="6" r="4.5"/>
-        <circle class="eye" cx="-2" cy="-3" r="5.5"/>
-        <circle class="eye" cx="8" cy="-4" r="6.5"/>
-        <circle class="pupil" id="pl" cx="-1" cy="-3" r="2.6"/>
-        <circle class="pupil" id="pr" cx="9.5" cy="-4" r="3"/>
-        <line class="lid" id="lidl" x1="-7" y1="-3" x2="3" y2="-3"/>
-        <line class="lid" id="lidr" x1="2" y1="-4" x2="14" y2="-4"/>
-        <g class="xeye" id="xl"><line x1="-5" y1="-6" x2="1" y2="0"/><line x1="1" y1="-6" x2="-5" y2="0"/></g>
-        <g class="xeye" id="xr"><line x1="5" y1="-8" x2="12" y2="0"/><line x1="12" y1="-8" x2="5" y2="0"/></g>
-        <path id="mouth" d="M 6 7 Q 11 10 15 6"/>
+
+      <!-- dragon -->
+      <g id="body-dragon" style="display:none">
+        <g data-limb="wingF" data-p="-2 -2">
+          <path d="M -2 -2 L -10 -22 L -12 -38 L -40 -42 Q -38 -33 -48 -27 Q -41 -20 -44 -11 Q -34 -10 -22 -1 Z" fill="#1e5446" opacity=".95"/>
+          <path class="ln" d="M -2 -2 L -10 -22 L -12 -38 M -12 -38 L -40 -42 M -12 -38 L -48 -27 M -12 -38 L -44 -11" stroke="#163f30" stroke-width="1.6"/>
+        </g>
+        <g data-limb="dangleF" data-p="-4 18" fill="#2c7444">
+          <path d="M -18 14 C -12 16, -10 24, -13 30 L -14 37 L -10 38.5 L -10 40.3 L -20 40.3 C -21 38, -19 36, -19.5 32 C -22 28, -24 20, -18 14 Z"/>
+          <path d="M 4 16 C 7 22, 7 30, 6 36 L 9 38 L 9.5 40.3 L 1 40.3 C 1 37, 2 34, 1 28 C 0 24, 0 19, 4 16 Z"/>
+        </g>
+        <g data-limb="tail" data-p="-20 14">
+          <path fill="url(#drScale)" d="M -18 7 C -28 4, -40 6, -48 3 C -52 1.6, -55 0, -57 -1.6 L -55.8 1.8 C -52 3.6, -46 7, -38 9 C -30 12, -24 20, -14 21 Z"/>
+          <path fill="#2a6e40" d="M -55.6 0 C -57 -3, -59.6 -5.6, -62 -6.4 C -62.6 -3.6, -63.4 -1.4, -65.6 0.6 C -63.2 1.6, -61.6 3.8, -61 6.6 C -58.8 5.4, -56.8 3, -55.6 0 Z"/>
+          <path class="ln" d="M -56.6 0.2 L -63.6 0.6" stroke="#1d5a3a" stroke-width=".8"/>
+          <path fill="url(#drHorn)" d="M -26 4.4 L -28.6 0.6 L -30.6 4.8 Z M -35 5 L -37.8 1.4 L -39.4 5.6 Z M -44 4 L -47 0.6 L -47.6 4.6 Z"/>
+        </g>
+        <path fill="url(#drScale)" d="M -22 14 C -22 2, -10 -4, 2 -3 C 12 -2, 18 4, 18 12 C 18 22, 8 28, -4 28 C -15 28, -22 24, -22 14 Z"/>
+        <path fill="url(#drBelly)" d="M 3 5 C 12 6, 17 14, 13 22 C 9 27, -2 29, -10 27 C -2 24, 2 16, 3 5 Z"/>
+        <path class="ln" d="M 6 9 Q 10 11 14 10 M 6 13.5 Q 10.5 15.5 15 14.5 M 4.6 18 Q 9 20 13.6 19 M 1.4 22 Q 5 24 9.6 23.2 M -3 25 Q 0 26.6 4 26.4" stroke="#a88f48" stroke-width=".8"/>
+        <path class="ln" d="M -14 6 q 2 -2 4 0 M -8 4 q 2 -2 4 0 M -2 3 q 2 -2 4 0 M -16 12 q 2 -2 4 0 M -10 10 q 2 -2 4 0 M -4 9 q 2 -2 4 0 M -12 17 q 2 -2 4 0 M -6 16 q 2 -2 4 0" stroke="#256b3c" stroke-width=".7" opacity=".7"/>
+        <path fill="url(#drHorn)" d="M -18 2.4 L -18 -3.6 L -13.6 0.4 Z M -11 -1.6 L -9.6 -7.6 L -6.4 -2.6 Z M -3 -3 L -0.4 -8.8 L 2.2 -3.4 Z M 5.4 -2.6 L 9.4 -7.6 L 10.2 -1.4 Z"/>
+        <path fill="url(#drScale)" d="M 5 0 C 10 -8, 16 -16, 22 -20 L 30 -13 C 26 -9, 20 -1, 16 10 Z"/>
+        <path fill="url(#drBelly)" d="M 16 10 C 20 0, 25.6 -8, 29.6 -12.6 L 32.4 -10 C 28 -5.6, 22.4 2, 19 11 Z"/>
+        <path fill="url(#drHorn)" d="M 11.6 -9 L 13 -15.4 L 15.6 -10.6 Z M 16.6 -15 L 19 -21 L 20.8 -16.2 Z"/>
+        <g data-limb="dangle" data-p="-4 18" fill="url(#drScale)">
+          <path d="M -14 14 C -8 16, -6 24, -9 30 L -10 37 L -6 38.5 L -6 40.3 L -16 40.3 C -17 38, -15 36, -15.5 32 C -18 28, -20 20, -14 14 Z"/>
+          <path d="M 8 16 C 11 22, 11 30, 10 36 L 13 38 L 13.5 40.3 L 5 40.3 C 5 37, 6 34, 5 28 C 4 24, 4 19, 8 16 Z"/>
+          <path fill="#f4ecd4" d="M -6 40.3 L -4 40.3 L -5.6 38.6 Z M 13.5 40.3 L 15.5 40.3 L 13.8 38.4 Z"/>
+        </g>
+        <path fill="url(#drHorn)" d="M 23 -27 C 18 -33, 14 -38.5, 8 -41.5 C 13.4 -37, 16.6 -32, 19 -25 Z"/>
+        <path fill="url(#drHorn)" d="M 28 -30.4 C 26.4 -37.6, 23.4 -43.6, 18.4 -47.6 C 24.4 -44.6, 29.4 -38.6, 31.6 -30.6 Z"/>
+        <path fill="url(#drScale)" d="M 19 -22 C 21 -29, 29 -33, 36 -31 C 41 -29.5, 46 -26, 50 -24.5 C 53 -23.5, 53.5 -19.5, 51 -18 C 47 -15.5, 40 -14, 33 -14 C 26 -14, 18 -15, 19 -22 Z"/>
+        <path fill="#2a6e40" d="M 22 -16 L 16.4 -12.4 L 21.6 -13.6 L 19.4 -9.4 L 25 -14 Z"/>
+        <path class="ln" d="M 29.6 -27.6 Q 34 -29.4 38.6 -26.4" stroke="#1f5a33" stroke-width="1.6"/>
+        <ellipse cx="49.8" cy="-22" rx="1.2" ry=".7" fill="#173f26" transform="rotate(-15 49.8 -22)"/>
+        <path class="ln" d="M 37 -29.4 Q 44 -27.6 49.6 -24.8" stroke="#bff0c4" stroke-width="1" opacity=".55"/>
+        <g class="eo">
+          <path d="M 30.6 -24 Q 34 -27.4 37.8 -24.6 Q 34 -21.6 30.6 -24 Z" fill="url(#drEye)" stroke="#173f26" stroke-width=".7"/>
+          <ellipse cx="34.3" cy="-24.4" rx=".7" ry="2.3" fill="#1a0a00"/>
+          <circle cx="35.4" cy="-25.6" r=".7" fill="#fff"/>
+        </g>
+        <g class="es ln" stroke="#173f26" stroke-width="1.1"><path d="M 30.6 -24.2 Q 34.2 -21.8 37.8 -24.4"/></g>
+        <g class="ex ln" stroke="#173f26" stroke-width="1.1"><path d="M 31.2 -26.6 L 37 -24.2 L 31.2 -21.8"/></g>
+        <g class="ln" stroke="#173f26" stroke-width="1">
+          <path data-states="calm" d="M 51 -18.2 C 46 -17.6, 40 -17, 34.6 -18.4"/>
+          <g data-states="done">
+            <path d="M 51.2 -18.6 C 46.4 -12.6, 39 -13, 34.6 -18 C 40 -17, 46 -17.4, 51.2 -18.6 Z" fill="#5a1414" stroke-width=".8"/>
+            <path fill="#fff" stroke="none" d="M 47 -17.6 L 47.8 -16 L 48.6 -17.8 Z M 43 -17.2 L 43.8 -15.6 L 44.6 -17.3 Z"/>
+          </g>
+          <g data-states="waiting"><path d="M 51 -18.2 C 48 -17.8, 46 -17.6, 44 -17.6"/><ellipse cx="46.6" cy="-16.8" rx="1.6" ry="1.2" fill="#5a1414"/></g>
+          <path data-states="error" d="M 51 -17 C 46 -18.6, 40 -18.4, 34.6 -17"/>
+        </g>
+        <g data-limb="wingN" data-p="0 -2">
+          <path d="M 0 -2 L -8 -24 L -10 -41 L -38 -46 Q -36 -36 -47 -30 Q -39 -22 -43 -12 Q -32 -11 -20 0 Z" fill="url(#drWing)"/>
+          <path class="ln" d="M 0 -2 L -8 -24 L -10 -41" stroke="#1d5a3a" stroke-width="2.6"/>
+          <path class="ln" d="M -10 -41 L -38 -46 M -10 -41 L -47 -30 M -10 -41 L -43 -12" stroke="#1d5a3a" stroke-width="1.5"/>
+          <path fill="#f4ecd4" d="M -10 -41 L -8.6 -45.6 L -7.6 -40.6 Z"/>
+        </g>
+      </g>
+
+      <!-- ghost -->
+      <g id="body-ghost" style="display:none">
+        <path fill="#dfe9ff" opacity=".55" filter="url(#glow)" d="M -2 -30 C 12 -32, 24 -22, 24 -8 C 24 6, 18 16, 10 24 C 4 30, -6 34, -16 36 C -22 37, -28 35, -32 38 C -30 31, -26 30, -24 26 C -27 25, -31 25, -34 27 C -32 20, -26 17, -22 12 C -24 4, -22 -10, -16 -20 C -12 -26, -8 -29, -2 -30 Z"/>
+        <path fill="url(#ghBody)" stroke="#b9c8e6" stroke-width=".8" stroke-opacity=".5" d="M -2 -30 C 12 -32, 24 -22, 24 -8 C 24 6, 18 16, 10 24 C 4 30, -6 34, -16 36 C -22 37, -28 35, -32 38 C -30 31, -26 30, -24 26 C -27 25, -31 25, -34 27 C -32 20, -26 17, -22 12 C -24 4, -22 -10, -16 -20 C -12 -26, -8 -29, -2 -30 Z"/>
+        <ellipse cx="-12" cy="0" rx="8" ry="18" fill="#aebedd" opacity=".25" filter="url(#soft)"/>
+        <g class="eo">
+          <ellipse cx="6" cy="-12" rx="2.9" ry="3.9" fill="url(#ghEye)"/>
+          <ellipse cx="15.6" cy="-12.6" rx="2.4" ry="3.4" fill="url(#ghEye)"/>
+          <circle cx="6.9" cy="-13.6" r=".85" fill="#fff" opacity=".9"/>
+          <circle cx="16.3" cy="-14" r=".7" fill="#fff" opacity=".9"/>
+        </g>
+        <g class="es ln" stroke="#1d2433" stroke-width="1.1"><path d="M 3.2 -11.6 Q 6 -9.2 8.8 -11.6"/><path d="M 13.2 -12.2 Q 15.6 -10 18 -12.2"/></g>
+        <g class="ex ln" stroke="#1d2433" stroke-width="1.1"><path d="M 3.6 -14 L 8.4 -11.8 L 3.6 -9.6"/><path d="M 18 -14.4 L 13.6 -12.2 L 18 -10"/></g>
+        <ellipse cx="3.6" cy="-6.2" rx="2.6" ry="1.4" fill="#ffaabf" opacity=".4" filter="url(#soft)"/>
+        <ellipse cx="17.6" cy="-6.8" rx="2" ry="1.2" fill="#ffaabf" opacity=".4" filter="url(#soft)"/>
+        <g class="ln" stroke="#1d2433" stroke-width="1">
+          <path data-states="calm" d="M 9.4 -5.4 Q 11 -4 12.6 -5.4"/>
+          <path data-states="done" d="M 8.6 -5.8 Q 11 -0.8 13.6 -5.8 Z" fill="#1d2433"/>
+          <ellipse data-states="waiting" cx="11" cy="-4.4" rx="1.5" ry="2" fill="#1d2433"/>
+          <path data-states="error" d="M 9.2 -3.8 Q 11 -5.6 12.8 -3.8"/>
+        </g>
+        <g data-limb="armN" data-p="16 2">
+          <path d="M 13 0 C 18 2, 24 6, 27 11 C 28 13, 26 14.5, 24.5 13 C 21 9.5, 16 6, 12.5 5 Z" fill="#f4f7fd" opacity=".92"/>
+        </g>
       </g>
     </svg>
+    <div id="rig"></div>
   </div>
   <div id="bubble"></div>
   <span id="hint">click your buddy — it talks · change it via “Claude Pulse: Choose Buddy Character”</span>
@@ -203,7 +637,6 @@
   const charsvg = document.getElementById('charsvg');
   const bubble = document.getElementById('bubble');
   const stage = document.getElementById('stage');
-  const mouth = document.getElementById('mouth');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const $ = (id) => document.getElementById(id);
 
@@ -215,35 +648,36 @@
       // instead of an invisible buddy.
       imgMode = false;
       charimg.style.display = 'none';
-      charsvg.style.display = '';
+      char.classList.remove('img');
       setFace(data.state);
     };
     charimg.src = IMG;
     charimg.style.display = 'block';
-    charsvg.style.display = 'none';
+    char.classList.add('img');
   }
 
   // ---- Character traits -------------------------------------------------
   // kind: biped | quad | flyer | slider. scale sizes the whole character.
   // speed multiplies walking/crawling. leap = chance to grab the ceiling.
-  // face: [x, y, scale] = where the head is in the profile art.
+  // tail: [sways per second, degrees]. reach: art y of the hands held up,
+  // so a hang puts them on the ceiling. shadow: [x, half-width] on the ground.
   const CHARS = {
-    critter: { kind: 'biped',  scale: 1,    speed: 1,    leap: 0.55, climb: true,  jumps: true,  limb: '#d99347', face: [22, -20, 1] },
-    robot:   { kind: 'biped',  scale: 1,    speed: 0.9,  leap: 0.3,  climb: true,  jumps: true,  limb: '#8a97a8', face: [10, -23, 0.9] },
-    cat:     { kind: 'quad',   scale: 1,    speed: 1.1,  leap: 0.85, climb: true,  jumps: true,  limb: '#848a94', face: [24, -8, 0.9] },
-    pup:     { kind: 'quad',   scale: 1,    speed: 1.25, leap: 0.6,  climb: true,  jumps: true,  limb: '#a9764f', face: [22, -9, 0.85] },
-    turtle:  { kind: 'quad',   scale: 0.8,  speed: 0.3,  leap: 0.05, climb: false, jumps: true,  limb: '#8fb072', face: [40, 4, 0.6] },
-    snail:   { kind: 'slider', scale: 0.55, speed: 0.2,  leap: 0,    climb: true,  jumps: false, climbSpeed: 0.35, face: [30, 8, 0.72] },
-    bee:     { kind: 'flyer',  scale: 0.7,  ease: 0.06,  retarget: 0.02,  restP: 0.2,  flap: 9,   flapAmp: 32, bobAmp: 4, wings: 'small', face: [22, -2, 0.85], tricks: true },
-    dragon:  { kind: 'flyer',  scale: 1.5,  ease: 0.012, retarget: 0.002, restP: 0.4,  flap: 0.9, flapAmp: 18, bobAmp: 5, wings: 'big',   face: [34, -26, 0.8] },
-    ghost:   { kind: 'flyer',  scale: 1,    ease: 0.02,  retarget: 0,     restP: 0.35, flap: 0,   flapAmp: 0,  bobAmp: 3, wings: 'none', arms: true, limb: '#c6d1e4', face: [4, -4, 1] },
+    critter: { kind: 'biped',  scale: 1,    speed: 1,    leap: 0.55, climb: true,  jumps: true,  tail: [0.5, 5],  reach: -19, shadow: [0, 17] },
+    robot:   { kind: 'biped',  scale: 1,    speed: 0.9,  leap: 0.3,  climb: true,  jumps: true,  reach: -18, shadow: [0, 16] },
+    cat:     { kind: 'quad',   scale: 1,    speed: 1.1,  leap: 0.85, climb: true,  jumps: true,  tail: [0.35, 8], reach: -5, shadow: [-6, 34] },
+    pup:     { kind: 'quad',   scale: 1,    speed: 1.25, leap: 0.6,  climb: true,  jumps: true,  tail: [2, 12],   reach: -5, shadow: [-6, 34] },
+    turtle:  { kind: 'quad',   scale: 0.8,  speed: 0.3,  leap: 0.05, climb: false, jumps: true,  reach: -5, shadow: [-3, 36] },
+    snail:   { kind: 'slider', scale: 0.55, speed: 0.2,  leap: 0,    climb: true,  jumps: false, climbSpeed: 0.35, blink: false, shadow: [2, 46] },
+    bee:     { kind: 'flyer',  scale: 0.7,  ease: 0.06,  retarget: 0.02,  restP: 0.2,  flap: 9,   flapAmp: 32, bobAmp: 4, tricks: true, shadow: [3, 18] },
+    dragon:  { kind: 'flyer',  scale: 1.5,  ease: 0.012, retarget: 0.002, restP: 0.4,  flap: 0.9, flapAmp: 18, bobAmp: 5, tail: [0.3, 5], shadow: [-2, 26] },
+    ghost:   { kind: 'flyer',  scale: 1,    ease: 0.02,  retarget: 0,     restP: 0.35, flap: 0,   flapAmp: 0,  bobAmp: 3 },
   };
   const CHARACTER = "{{char}}";
   // In image mode the built-in art is hidden; if the image fails to load we
   // fall back to the critter — body AND traits, so the two always agree.
   const charKey = (!imgMode && CHARS[CHARACTER]) ? CHARACTER : 'critter';
   const C = imgMode
-    ? { kind: 'biped', scale: 1, speed: 1, leap: 0.5, climb: true, jumps: true, face: CHARS.critter.face }
+    ? { kind: 'biped', scale: 1, speed: 1, leap: 0.5, climb: true, jumps: true }
     : CHARS[charKey];
   const AIR = C.kind === 'flyer';
   const CH = Math.round(78 * (C.scale || 1));   // character box in px
@@ -254,19 +688,62 @@
     const el = $('body-' + id);
     if (el) el.style.display = id === charKey ? '' : 'none';
   });
-  if (C.face) $('face').setAttribute('transform', 'translate(' + C.face[0] + ' ' + C.face[1] + ') scale(' + C.face[2] + ')');
-  $('limbsBack').setAttribute('fill', C.limb || '#d99347');
-  $('limbsFront').setAttribute('fill', C.limb || '#d99347');
-  const LIMB_SETS = {
-    biped:  ['legN', 'legF', 'armN'],
-    quad:   ['qfn', 'qff', 'qbn', 'qbf'],
-    flyer:  (C.wings === 'small' ? ['wingN', 'wingF'] : C.wings === 'big' ? ['dwingN', 'dwingF'] : [])
-              .concat(C.arms ? ['armN'] : []),
-    slider: [],
-  };
-  const ALL_LIMBS = ['legN', 'legF', 'armN', 'qfn', 'qff', 'qbn', 'qbf', 'wingN', 'wingF', 'dwingN', 'dwingF'];
-  const visibleLimbs = LIMB_SETS[C.kind] || LIMB_SETS.biped;
-  ALL_LIMBS.forEach((id) => { $(id).style.display = visibleLimbs.indexOf(id) >= 0 ? '' : 'none'; });
+  // ---- Layers -------------------------------------------------------------
+  // Each moving part (data-limb, turning about data-p) is lifted out of the
+  // body into an <svg> of its own and turned with a CSS transform, so the
+  // compositor moves a picture painted once. Turned inside one SVG, every
+  // limb's step repainted the whole character — fur, blurs and all — each
+  // frame. The parts between moving ones become still layers, in drawing
+  // order, so what is in front stays in front.
+  const rig = $('rig');
+  const LIMB = {};
+  function addLayer(nodes, cls) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const s = document.createElementNS(NS, 'svg');
+    s.setAttribute('viewBox', charsvg.getAttribute('viewBox'));
+    if (cls) s.setAttribute('class', cls);
+    const g = document.createElementNS(NS, 'g');
+    if (cls !== 'ground') g.setAttribute('filter', 'url(#lift)');
+    nodes.forEach((n) => g.appendChild(n));
+    s.appendChild(g);
+    rig.appendChild(s);
+    // Shrink the layer to what it holds (plus room for shadow, glow and fur):
+    // the compositor blends every layer every frame, so empty box costs.
+    const b = g.getBBox();
+    const box = b.width > 0 || b.height > 0 ? { x: b.x - 8, y: b.y - 8, w: b.width + 16, h: b.height + 16 }
+      : { x: -60, y: -80, w: 120, h: 120 };     // hidden (image mode): whole box
+    s.setAttribute('viewBox', box.x + ' ' + box.y + ' ' + box.w + ' ' + box.h);
+    s.style.left = ((box.x + 60) / 1.2) + '%';
+    s.style.top = ((box.y + 80) / 1.2) + '%';
+    s.style.width = (box.w / 1.2) + '%';
+    s.style.height = (box.h / 1.2) + '%';
+    s.box = box;
+    return s;
+  }
+  const shadowEl = $('shadow');
+  if (C.shadow) { shadowEl.setAttribute('cx', C.shadow[0]); shadowEl.setAttribute('rx', C.shadow[1]); }
+  const SHADOW = addLayer([shadowEl], 'ground');
+  if (!C.shadow) SHADOW.style.display = 'none';
+  let still = [];
+  Array.from($('body-' + charKey).children).forEach((n) => {   // elements only: no layers of whitespace
+    const limb = n.getAttribute('data-limb');
+    const beacon = n.classList.contains('beacon');   // blinks on its own layer
+    if (!limb && !beacon) { still.push(n); return; }
+    if (still.length) { addLayer(still); still = []; }
+    const s = addLayer([n], beacon ? 'beacon' : '');
+    if (limb) {
+      // The pivot, from art units to percent of this layer's own box.
+      const p = (n.getAttribute('data-p') || '0 0').split(' ').map(Number);
+      s.style.transformOrigin = ((p[0] - s.box.x) / s.box.w * 100).toFixed(2) + '% '
+        + ((p[1] - s.box.y) / s.box.h * 100).toFixed(2) + '%';
+      LIMB[limb] = { s, t: '' };
+    }
+  });
+  if (still.length) addLayer(still);
+  // How tall the drawing stands, in px: speech and effects start just above
+  // it, not above the empty top of the box. (An image fills its box.)
+  const ART = Array.from(rig.children).reduce((h, s) => s.box.w === 120 ? h
+    : Math.max(h, Math.round(CH * (40 - (s.box.y + 8)) / 120)), 0) || CH;
 
   // Geometry helpers derived from the character size.
   const PAD = 6;
@@ -333,7 +810,7 @@
     bubble.style.left = left + 'px';
     // Follow the buddy vertically (it may be on a wall, the ceiling, or in
     // the air) and clamp into view — short panels would otherwise clip it.
-    const base = Math.min(stage.clientHeight - bubble.offsetHeight - 4, Math.max(CH + 20, y + CH + 14));
+    const base = Math.min(stage.clientHeight - bubble.offsetHeight - 4, Math.max(ART + 20, y + ART + 14));
     bubble.style.bottom = Math.max(4, base) + 'px';
     bubble.classList.add('show');
     clearTimeout(bubbleTimer);
@@ -382,32 +859,30 @@
     el.textContent = txt;
     el.style.left = (x + CH * 0.28 + (dx || 0)) + 'px';
     // Default: above the buddy's head (follows it up walls/ceiling).
-    el.style.bottom = (bottomPx !== undefined ? bottomPx : CH + 10 + y) + 'px';
+    el.style.bottom = (bottomPx !== undefined ? bottomPx : ART + 10 + y) + 'px';
     stage.appendChild(el);
     setTimeout(() => el.remove(), 1700);
   }
 
-  const show = (id, on) => $(id).style.display = on ? '' : 'none';
-  let napping = false;
-  // Eyes close only while resting between strolls (or on error).
-  function setNap(on) {
-    if (imgMode || napping === on) return;
-    napping = on;
-    const dead = data.state === 'error';
-    show('lidl', on && !dead); show('lidr', on && !dead);
-    show('pl', !on && !dead); show('pr', !on && !dead);
+  // ---- Face ---------------------------------------------------------------
+  // Each body draws its own eyes three ways — .eo open, .es shut, .ex dazed —
+  // and marks the pieces that belong to one mood with data-states.
+  const each = (sel, fn) => rig.querySelectorAll(sel).forEach(fn);
+  let eyeMode = '', blinkUntil = 0, nextBlink = 2500;
+  function setEyes(mode) {
+    if (imgMode || mode === eyeMode) return;
+    eyeMode = mode;
+    each('.eo', (el) => { el.style.display = mode === 'open' ? 'inline' : 'none'; });
+    each('.es', (el) => { el.style.display = mode === 'shut' ? 'inline' : 'none'; });
+    each('.ex', (el) => { el.style.display = mode === 'dazed' ? 'inline' : 'none'; });
   }
   function setFace(state) {
     if (imgMode) return;
-    const dead = state === 'error';
-    show('xl', dead); show('xr', dead);
-    show('lidl', false); show('lidr', false);
-    show('pl', !dead); show('pr', !dead);
-    napping = false;
-    mouth.setAttribute('d',
-      state === 'done' ? 'M 5 6 Q 11 14 16 5' :
-      state === 'error' ? 'M 6 9 Q 11 5 16 8' :
-      state === 'waiting' ? 'M 8 7 Q 11 10 14 7' : 'M 6 7 Q 11 10 15 6');
+    const mood = state === 'waiting' || state === 'done' || state === 'error' ? state : 'calm';
+    each('[data-states]', (el) => {
+      el.style.display = el.getAttribute('data-states').split(' ').indexOf(mood) >= 0 ? 'inline' : 'none';
+    });
+    setEyes(state === 'error' ? 'dazed' : 'open');
   }
 
   let bobT = 0, dir = 1, moving = false, squish = 1;
@@ -436,11 +911,24 @@
     }
     if (AIR && airMode === 'waggle') rot += Math.sin(bobT * 14) * 14;   // dance wobble
     squish += (1 - squish) * 0.18;
-    char.style.transformOrigin = (activity === 'hang' || held) ? '50% 0%'
-      : (activity === 'flip' || flip.active || onSurface || !grounded) ? '50% 50%' : '50% 100%';
+    // Hanging: the raised hands sit well below the top of the box. Lift it so
+    // the hands are what touches the ceiling, and swing from them.
+    const hang = activity === 'hang' && C.reach !== undefined;
+    const handsPct = hang ? (C.reach + 80) / 1.2 : 0;    // viewBox y -80..40 → 0..100%
+    const lift = hang
+      ? Math.max(0, stage.clientHeight - 1 - FLOOR - y - CH * (1 - handsPct / 100))
+      : 0;
+    // The art fills the lower two thirds of the box; 67% is its middle.
+    char.style.transformOrigin = (activity === 'hang' || held) ? '50% ' + handsPct.toFixed(1) + '%'
+      : onSurface ? '50% 50%'
+      : (activity === 'flip' || flip.active || !grounded) ? '50% 67%' : '50% 100%';
     char.style.transform =
-      'translateY(' + (bob - y).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
+      'translateY(' + (bob - y - lift).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
       ' scaleX(' + (dir * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
+    // Contact shadow: on the floor only, fading as it leaves the ground.
+    const onFloor = !held && !onSurface && activity !== 'hang' && (!AIR || y < 3);
+    const op = onFloor ? Math.max(0, 1 - y / 30).toFixed(2) : '0.00';
+    if (op !== SHADOW.dataset.op) { SHADOW.dataset.op = op; SHADOW.style.opacity = op; }
   }
 
   let lastTs = 0, pauseUntil = 0, walkMul = 1, walkA = 0;
@@ -637,36 +1125,50 @@
     }
     // Profile rig: the art faces +x, so negative rotation swings a limb
     // forward/up. `ar` carries the gesture pose for the visible front arm.
-    const rot = (id, a, px, py) => $(id).setAttribute('transform', 'rotate(' + a.toFixed(1) + ' ' + px + ' ' + py + ')');
+    // Each part turns its own layer about the pivot its drawing names.
+    const R = (name, a) => {
+      const l = LIMB[name];
+      if (!l) return;
+      const t = 'rotate(' + a.toFixed(1) + 'deg)';
+      if (t !== l.t) { l.t = t; l.s.style.transform = t; }
+    };
     if (C.kind === 'biped') {
-      rot('legN', ll, 6, 22); rot('legF', lr, -8, 22);
-      rot('armN', ar, 16, 4);   // carries walk swing, air pose, and gestures
+      R('legN', ll); R('legF', lr);
+      // Carries walk swing, air pose, and gestures. A raised near arm would
+      // cross the face, so gestures lift it forward, in front of the muzzle;
+      // only a hang reaches straight up.
+      R('armN', activity === 'hang' || ar >= -95 ? ar : -95 + (ar + 95) * 0.45);
     } else if (C.kind === 'quad') {
       // Diagonal gait: front-near with back-far, front-far with back-near.
-      // The front-near paw doubles as the gesture arm.
-      const fn = gesture ? Math.max(-150, ar) : (grounded ? walkA : -20);
+      // The front-near paw doubles as the gesture arm: lifted forward the way
+      // a cat paws at something, straight up only to hang on.
+      const fn = !gesture ? (grounded ? walkA : -20)
+        : activity === 'hang' ? Math.max(-150, ar)
+        : Math.max(-62, Math.min(-38, -48 + (ar + 150) * 0.5));   // keeps the wave's wiggle
       const ff = held ? -ll : grounded ? -walkA : -20;
       const bn = held ? -ll : grounded ? -walkA : 15, bf = held ? ll : grounded ? walkA : 15;
-      rot('qfn', fn, 15, 24); rot('qff', ff, 9, 24);
-      rot('qbn', bn, -12, 24); rot('qbf', bf, -18, 24);
+      R('qfn', fn); R('qff', ff);
+      R('qbn', bn); R('qbf', bf);
     } else if (C.kind === 'flyer') {
       if (C.flap) {
-        // Wings fold while napping on the floor.
+        // Both wings beat together; they fold while napping on the floor.
         const a = airMode === 'nap' ? 0 : Math.sin(bobT * C.flap * 6.283) * C.flapAmp + (moving ? 8 : 0);
-        if (C.wings === 'small') { rot('wingN', a, 0, -12); rot('wingF', -a * 0.8, 0, -12); }
-        else { rot('dwingN', a, -6, -4); rot('dwingF', -a * 0.8, -10, -2); }
+        R('wingN', a); R('wingF', a * 0.9);
       }
-      if (C.arms) {
-        // Ghost arm: gentle float pose unless a gesture is active.
-        rot('armN', gesture ? ar : -18 - Math.sin(bobT * 1.8) * 6, 16, 4);
-      }
-      if (charKey === 'bee' && !imgMode) {
-        // Antennae bob, legs dangle and kick while flying.
-        rot('antN', Math.sin(bobT * 3) * 8, 26, -14);
-        rot('antF', Math.sin(bobT * 3 + 1) * 8, 20, -14);
-        rot('beelegs', (moving ? Math.sin(bobT * 7) * 12 : Math.sin(bobT * 2) * 4), -2, 18);
-      }
+      // Ghost arm: gentle float pose unless a gesture is active.
+      R('armN', gesture ? ar : -18 - Math.sin(bobT * 1.8) * 6);
+      // Antennae bob, legs dangle and kick while flying.
+      R('antN', Math.sin(bobT * 3) * 8);
+      R('antF', Math.sin(bobT * 3 + 1) * 8);
+      const dg = moving ? Math.sin(bobT * 7) * 12 : Math.sin(bobT * 2) * 4;
+      R('dangle', dg); R('dangleF', dg * 0.8);
     }
+    if (C.tail) {
+      // A slow sway, quicker and wider when excited — the pup wags.
+      const happy = data.state === 'done' || data.state === 'waiting' || ts < celebrateUntil || ts < pointUntil;
+      R('tail', Math.sin(bobT * 6.283 * C.tail[0] * (happy ? 2.5 : 1)) * C.tail[1] * (happy ? 1.5 : 1));
+    }
+    R('ear', walkA * 0.25 + Math.sin(bobT * 2) * 2);   // floppy ear
   }
 
   function loop(ts) {
@@ -852,7 +1354,11 @@
     const legsActive = !AIR && moving && (y <= 0.5 || activity === 'climb');
     const gait = C.kind === 'quad' ? 22 : 26;
     walkA += ((legsActive ? Math.sin(bobT * (C.speed < 0.5 ? 5 : 10)) * (activity === 'climb' ? 18 : gait) : 0) - walkA) * Math.min(1, 0.25 * steps);
-    setNap(data.state === 'idle' && ts < pauseUntil && ts >= pointUntil);
+    // Eyes close while resting between strolls, blink now and then otherwise.
+    const nap = data.state === 'idle' && ts < pauseUntil && ts >= pointUntil;
+    if (ts >= nextBlink) { blinkUntil = ts + 140; nextBlink = ts + 2500 + Math.random() * 4500; }
+    setEyes(data.state === 'error' ? 'dazed'
+      : (nap || (C.blink !== false && ts < blinkUntil)) ? 'shut' : 'open');
     x = Math.max(4, Math.min(x, wallR(w)));
     char.style.left = x + 'px';
     applyTransform(ts);

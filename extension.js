@@ -1101,13 +1101,13 @@ function activate(context) {
     vscode.commands.registerCommand('claudePulse.chooseBuddy', async () => {
       const cfg = vscode.workspace.getConfiguration('claudePulse');
       const choice = await vscode.window.showQuickPick([
-        { label: '🐹 Critter', description: 'round and amber, the default · climbs, leaps 55%', id: 'critter' },
-        { label: '🤖 Robot', description: 'antenna, screen face · heavy, leaps 30%', id: 'robot' },
-        { label: '🐱 Cat', description: 'ears, tail, judgment · agile, leaps 85%', id: 'cat' },
-        { label: '🐶 Pup', description: 'four legs, floppy ears, fast · leaps 60%', id: 'pup' },
-        { label: '🐢 Turtle', description: 'small, four legs, very slow · leaps 5% (bless it)', id: 'turtle' },
+        { label: '🐾 Red panda', description: 'the default · stands up, climbs, leaps 55%', id: 'critter' },
+        { label: '🤖 Robot', description: 'antenna, screen face, status light · heavy, leaps 30%', id: 'robot' },
+        { label: '🐱 Cat', description: 'grey tabby, ears, tail, judgment · agile, leaps 85%', id: 'cat' },
+        { label: '🐶 Pup', description: 'golden puppy, floppy ears, wags · fast, leaps 60%', id: 'pup' },
+        { label: '🐢 Tortoise', description: 'small, four legs, very slow · leaps 5% (bless it)', id: 'turtle' },
         { label: '🐌 Snail', description: 'tiny and slowest · slowly crawls walls and ceiling', id: 'snail' },
-        { label: '🐝 Bee', description: 'tiny, fast, buzzing wings · flies everywhere', id: 'bee' },
+        { label: '🐝 Bee', description: 'a honeybee, buzzing wings · flies everywhere', id: 'bee' },
         { label: '🐉 Dragon', description: 'big, slow wingbeats · glides the whole panel', id: 'dragon' },
         { label: '👻 Ghost', description: 'floats, never sleeps quietly', id: 'ghost' },
         { label: '🖼️ My own image…', description: 'PNG / JPG / WebP / SVG / animated GIF', id: 'image' },

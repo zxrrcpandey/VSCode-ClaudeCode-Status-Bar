@@ -798,8 +798,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let charMenu = NSMenu()
         let current = UserDefaults.standard.string(forKey: "buddyCharacter") ?? "critter"
         let usingImage = !(UserDefaults.standard.string(forKey: "buddyImage") ?? "").isEmpty
-        let labels = ["critter": "🐹 Critter", "robot": "🤖 Robot", "cat": "🐱 Cat", "pup": "🐶 Pup",
-                      "turtle": "🐢 Turtle", "snail": "🐌 Snail", "bee": "🐝 Bee",
+        let labels = ["critter": "🐾 Red panda", "robot": "🤖 Robot", "cat": "🐱 Cat", "pup": "🐶 Pup",
+                      "turtle": "🐢 Tortoise", "snail": "🐌 Snail", "bee": "🐝 Bee",
                       "dragon": "🐉 Dragon", "ghost": "👻 Ghost"]
         for c in DesktopBuddy.characters {
             let i = NSMenuItem(title: labels[c] ?? c, action: #selector(pickCharacter(_:)), keyEquivalent: "")
