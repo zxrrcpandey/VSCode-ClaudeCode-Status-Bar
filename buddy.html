@@ -79,7 +79,7 @@
 <body>
 <div id="stage">
   <div id="floor"></div>
-  <div id="char" title="Click me!">
+  <div id="char" title="Click me, or drag me out of the way">
     <img id="charimg" alt="buddy">
     <!-- All characters are drawn in profile, facing right (+x). dir=-1 mirrors. -->
     <svg id="charsvg" viewBox="-60 -60 120 120">
@@ -358,10 +358,12 @@
 
   let wavingUntil = 0, celebrateUntil = 0, pointUntil = 0;
   char.addEventListener('click', () => {
+    // The click that ends a drag is not a poke.
+    if (dragged) { dragged = false; return; }
     squish = 0.82;
     const now = performance.now();
     pointUntil = now + 2600;   // stop and point at you
-    pauseUntil = now + 2600;
+    pauseUntil = Math.max(pauseUntil, now + 2600);
     if (AIR && C.tricks) {
       // Happy loop-de-loop with a burst of hearts.
       if (!reduced) flip = { active: true, start: now, dur: 700, turns: 1 };
@@ -417,7 +419,7 @@
     const bob = (grounded && !AIR) ? Math.sin(bobT * 2.2) * -2.5 : Math.sin(bobT * 1.8) * -(C.bobAmp || 3);
     let rot = 0;
     const onSurface = Math.abs(surfCur) > 1 || surfTarget !== 0;
-    if (activity === 'hang') {
+    if (activity === 'hang' || held) {
       rot = Math.sin(bobT * 2) * 7;                   // pendulum from the hands
     } else if (onSurface) {
       // Climbing a wall or crawling the ceiling — orientation follows the surface.
@@ -434,7 +436,7 @@
     }
     if (AIR && airMode === 'waggle') rot += Math.sin(bobT * 14) * 14;   // dance wobble
     squish += (1 - squish) * 0.18;
-    char.style.transformOrigin = activity === 'hang' ? '50% 0%'
+    char.style.transformOrigin = (activity === 'hang' || held) ? '50% 0%'
       : (activity === 'flip' || flip.active || onSurface || !grounded) ? '50% 50%' : '50% 100%';
     char.style.transform =
       'translateY(' + (bob - y).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
@@ -449,6 +451,78 @@
   const GRAV = 0.5; // px per frame², frame = 16.7ms
   const canJump = C.jumps !== false, canClimb = C.climb !== false;
   const leapSkill = C.leap || 0;
+
+  // ---- Picked up and put down ---------------------------------------------
+  // Drag the character off whatever it is covering. It dangles while carried,
+  // and once let go it stays put for STAY_MS (ten minutes unless the host
+  // sets PULSE_STAY_MS) instead of wandering straight back. A walker let go
+  // in mid-air drops to the floor first.
+  const STAY_MS = window.PULSE_STAY_MS > 0 ? window.PULSE_STAY_MS : 600000;
+  const FLOOR = 11;                       // #char's bottom offset in the stage
+  const topY = () => AIR ? maxApex() : ceilH();
+  let held = false, grab = null, dragged = false, parkUntil = 0;
+
+  function pickUp() {
+    held = true;
+    activity = 'held';
+    climb = null; leap = null; vy = 0; hopsLeft = 0; airPlan = null; airMode = 'fly';
+    flip.active = false; dropRoll = false; surfTarget = 0; surfCur = 0;
+    pauseUntil = 0; pointUntil = 0; parkUntil = 0; squish = 0.85;
+    char.style.cursor = 'grabbing';
+    vscode.postMessage({ type: 'grab' });
+  }
+
+  // Also the host's way to place it — on another screen, say. Everything a
+  // hand-off could leave half-done is reset, as in enterAt().
+  function dropAt(x0, y0) {
+    const w = Math.max(120, stage.clientWidth);
+    const ts = performance.now();
+    held = false; grab = null;
+    char.style.cursor = '';
+    x = Math.max(4, Math.min(x0, wallR(w)));
+    y = Math.max(0, Math.min(y0, topY()));
+    vy = 0; climb = null; leap = null; hopsLeft = 0; airPlan = null;
+    flip.active = false; dropRoll = false; surfTarget = 0; surfCur = 0;
+    targetX = x; targetY = y;
+    parkUntil = ts + STAY_MS;
+    if (AIR) { airMode = 'hover'; startRest(ts, STAY_MS); }
+    else if (y > 0.5) activity = 'drop';    // lands, then scheduleNext() parks it
+    else startRest(ts, STAY_MS);
+  }
+
+  char.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    dragged = false;
+    grab = { id: e.pointerId, sx: e.clientX, sy: e.clientY,
+             gx: e.clientX - x, gy: (stage.clientHeight - FLOOR - y) - e.clientY };
+    try { char.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  char.addEventListener('pointermove', (e) => {
+    if (!grab || e.pointerId !== grab.id) return;
+    if (!held) {
+      // A few pixels of wobble is still a click.
+      if (Math.hypot(e.clientX - grab.sx, e.clientY - grab.sy) < 5) return;
+      pickUp();
+    }
+    const w = Math.max(120, stage.clientWidth);
+    x = Math.max(4, Math.min(e.clientX - grab.gx, wallR(w)));
+    y = Math.max(0, Math.min(stage.clientHeight - FLOOR - e.clientY - grab.gy, topY()));
+  });
+  function letGo(e) {
+    if (!grab || e.pointerId !== grab.id) return;
+    const g = grab;
+    grab = null;
+    if (!held) return;
+    dragged = true;
+    dropAt(x, y);
+    if ((AIR || y <= 0.5) && Math.random() < 0.4) {
+      say(pick(['I’ll wait over here.', 'Better view from here anyway.', 'Fine — this spot is nice too.']), 2500);
+    }
+    // The host may carry it on to the screen the pointer was let go over.
+    vscode.postMessage({ type: 'drop', gx: g.gx, gy: g.gy });
+  }
+  char.addEventListener('pointerup', letGo);
+  char.addEventListener('pointercancel', letGo);
 
   // Mostly short random hops, sometimes a long walk — with a fresh pace each
   // time, so the wandering doesn't read as edge-to-edge ping-pong.
@@ -497,6 +571,8 @@
   // What to do next, weighted by Claude's state and what this character can
   // actually do — energetic while working, acrobatic when done, lazy when idle.
   function scheduleNext(ts) {
+    // Put somewhere by hand: stay there until the time is up.
+    if (ts < parkUntil) { startRest(ts, parkUntil - ts); return; }
     const w = Math.max(120, stage.clientWidth);
     const s = data.state;
     const opts = [];
@@ -543,6 +619,9 @@
     } else if (activity === 'hang') {
       const k = Math.sin(bobT * 2.5) * 12;
       al = 178; ar = -178; ll = k; lr = -k; gesture = true;   // holding on, legs dangling
+    } else if (held) {
+      const k = Math.sin(bobT * 9) * 20;
+      al = 150; ar = -150 + k * 0.4; ll = k; lr = -k; gesture = true;   // carried: arms up, legs kicking
     }
     if (ts < pointUntil) {
       ar = -92 + Math.sin(bobT * 3) * 4;              // arm out, pointing at you
@@ -566,8 +645,8 @@
       // Diagonal gait: front-near with back-far, front-far with back-near.
       // The front-near paw doubles as the gesture arm.
       const fn = gesture ? Math.max(-150, ar) : (grounded ? walkA : -20);
-      const ff = grounded ? -walkA : -20;
-      const bn = grounded ? -walkA : 15, bf = grounded ? walkA : 15;
+      const ff = held ? -ll : grounded ? -walkA : -20;
+      const bn = held ? -ll : grounded ? -walkA : 15, bf = held ? ll : grounded ? walkA : 15;
       rot('qfn', fn, 15, 24); rot('qff', ff, 9, 24);
       rot('qbn', bn, -12, 24); rot('qbf', bf, -18, 24);
     } else if (C.kind === 'flyer') {
@@ -605,7 +684,9 @@
     targetX = Math.max(4, Math.min(targetX, wallR(w)));
     targetY = Math.max(0, Math.min(targetY, maxApex()));
 
-    if (AIR) {
+    if (held) {
+      moving = false;                       // the pointer moves it
+    } else if (AIR) {
       // Flyers own the whole area: free 2D flight. Bees zip and re-decide
       // constantly; the dragon glides; the ghost drifts.
       moving = !reduced && !resting;
@@ -861,8 +942,9 @@
   // variables exist — a stale 'flip'/'drop'/airPlan left behind by a hand-off
   // used to freeze the character at the screen edge.
   function steerToEdge(edge) {                // -1 = left wall, +1 = right wall
+    if (held) return;                         // in someone's hand: not going anywhere
     const w = Math.max(120, stage.clientWidth);
-    pauseUntil = 0; pointUntil = 0;
+    pauseUntil = 0; pointUntil = 0; parkUntil = 0;
     if (AIR) {
       airPlan = null; airMode = 'fly';
       targetX = edge > 0 ? wallR(w) : 4; targetY = y;
@@ -880,7 +962,8 @@
     const w = Math.max(120, stage.clientWidth);
     x = Math.max(4, Math.min(x0, wallR(w)));
     y = AIR ? Math.max(0, Math.min(y0, maxApex())) : 0;
-    vy = 0; pauseUntil = 0; pointUntil = 0;
+    vy = 0; pauseUntil = 0; pointUntil = 0; parkUntil = 0;
+    held = false; grab = null; char.style.cursor = '';
     climb = null; leap = null; surfTarget = 0; surfCur = 0;
     flip.active = false; dropRoll = false; hopsLeft = 0;
     airPlan = null; airMode = 'fly';

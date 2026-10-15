@@ -13,6 +13,10 @@
 //
 // Clicks pass straight through to whatever is underneath: the panels ignore
 // mouse events except while the cursor is actually over the character.
+//
+// It can be picked up and dragged out of the way, onto the other screen too,
+// and it stays where it is put for a while (buddyStaySeconds, ten minutes by
+// default) before it starts roaming again.
 
 import AppKit
 import WebKit
@@ -27,6 +31,8 @@ final class BuddyScreen {
     var cssRect: NSRect = .zero
     var lastRectAt = Date.distantPast
     var ready = false
+    /// Being carried, or put somewhere by hand and staying there.
+    var parked = false
     /// Set while the character has not moved — a natural moment to migrate.
     var lastX: Double = -1
     var stillSince = Date.distantPast
@@ -48,6 +54,15 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private var dueSince = Date.distantFuture
     private var finishing = false
     private var lastHoverPause = Date.distantPast
+    /// Between the page's "grab" and "drop": the character is in your hand.
+    private var dragging = false
+    private var dragStarted = Date.distantPast
+    /// How long the character stays where it was put down.
+    /// `defaults write com.warroom.claude-pulse buddyStaySeconds -float 120`
+    static var staySeconds: Double {
+        let v = UserDefaults.standard.object(forKey: "buddyStaySeconds") as? Double ?? 0
+        return v > 0 ? v : 600
+    }
     /// How close the cursor must get before the character stops to be clicked.
     /// `defaults write com.warroom.claude-pulse buddyNoticeRadius -float 200`
     /// makes it notice you sooner; a small value makes it harder to catch.
@@ -139,6 +154,7 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
                   return { postMessage: function (m) { window.webkit.messageHandlers.pulse.postMessage(m); },
                            getState: function () { return null; }, setState: function () {} };
                 };
+                window.PULSE_STAY_MS = \(Int(Self.staySeconds * 1000));
                 """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             // Report where the character is: this drives click-through and tells
             // us when it is standing still (a good moment to change screens).
@@ -148,8 +164,10 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
                     var el = document.getElementById('char');
                     if (el) {
                       var r = el.getBoundingClientRect();
+                      var parked = false;
+                      try { parked = held || performance.now() < parkUntil; } catch (e) {}
                       window.webkit.messageHandlers.pulse.postMessage(
-                        { type: 'rect', x: r.left, y: r.top, w: r.width, h: r.height });
+                        { type: 'rect', x: r.left, y: r.top, w: r.width, h: r.height, parked: parked });
                     }
                     setTimeout(report, 100);
                   }
@@ -223,15 +241,28 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         // Clickable only while the cursor is actually on the character.
         let mouse = NSEvent.mouseLocation
         let onScreenRect = s.panel.convertToScreen(s.hotRect)
-        let over = !s.hotRect.isEmpty && onScreenRect.contains(mouse)
+        var over = !s.hotRect.isEmpty && onScreenRect.contains(mouse)
+        if dragging {
+            // Carried: the page reports where it is only every 100ms, and a
+            // quick hand gets ahead of that. Letting the panel go click-through
+            // then would drop the character wherever the cursor outran it.
+            // The page's "drop" ends this; a lost one ends with the button.
+            if NSEvent.pressedMouseButtons & 1 == 0, Date().timeIntervalSince(dragStarted) > 1 {
+                dragging = false
+            } else {
+                over = true
+            }
+        }
         if s.panel.ignoresMouseEvents == over { s.panel.ignoresMouseEvents = !over }
         // Reach for the buddy and it stops and waits, like a pet noticing your
         // hand. Without this it walks (or climbs) out from under the cursor
         // before the click ever lands — the reason it felt unclickable.
+        // Never shorter than a pause already running, which is how a
+        // character put down by hand stays put.
         let near = onScreenRect.insetBy(dx: -Self.noticeRadius, dy: -Self.noticeRadius).contains(mouse)
-        if near, Date().timeIntervalSince(lastHoverPause) > 0.2 {
+        if near, !dragging, Date().timeIntervalSince(lastHoverPause) > 0.2 {
             lastHoverPause = Date()
-            s.web.evaluateJavaScript("try { pauseUntil = performance.now() + 700 } catch (e) {}")
+            s.web.evaluateJavaScript("try { pauseUntil = Math.max(pauseUntil, performance.now() + 700) } catch (e) {}")
         }
         if debugLogging, Date().timeIntervalSince(lastDebugAt) > 0.5 {
             lastDebugAt = Date()
@@ -301,6 +332,10 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private func beginCrossingIfNear() {
         guard screens.count > 1, screens.indices.contains(active) else { return }
         let from = screens[active]
+        // Put somewhere on purpose: leaving for the other screen would undo it.
+        // The long-wait fallback below counts from when it is free to go, or
+        // it would set off for the edge the moment the stay ran out.
+        if from.parked || dragging { dueSince = Date(); return }
         guard !from.cssRect.isEmpty else { return }
         let next = (active + 1) % screens.count
         let stageW = Double(from.container.bounds.width) / Double(from.web.pageZoom)
@@ -358,6 +393,34 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             self.log("crossed to screen \(c.to) at y=\(Int(y))")
             self.scheduleMigration()
         }
+    }
+
+    /// Let go over the other display: the drag itself cannot leave the panel
+    /// it started in, so the page has already put the character down at this
+    /// screen's edge. Carry it across to where the pointer is, keeping the
+    /// same grip — `gx`, `gy` are the pointer's offset from the character's
+    /// left edge and from its feet, in CSS pixels.
+    private func dropOnOtherScreen(gx: Double, gy: Double) {
+        let mouse = NSEvent.mouseLocation
+        guard screens.indices.contains(active),
+              let display = NSScreen.screens.first(where: { $0.frame.contains(mouse) }),
+              let to = screens.firstIndex(where: { display.frame.contains($0.panel.frame) }),
+              to != active, screens[to].ready else { return }
+        let from = screens[active], dest = screens[to]
+        let z = Double(dest.web.pageZoom)
+        // The pointer in the destination page: from its left, and up from its bottom.
+        let px = Double(mouse.x - dest.panel.frame.minX) / z
+        let up = Double(mouse.y - dest.panel.frame.minY) / z
+        // dropAt() clamps into the stage, so a release over the menu bar or
+        // past an edge still lands the character on screen.
+        dest.web.evaluateJavaScript("try { dropAt(\(px - gx), \(up - 11 - gy)) } catch (e) {}")
+        dest.panel.orderFrontRegardless()
+        active = to
+        from.panel.orderOut(nil)
+        from.panel.ignoresMouseEvents = true
+        post0ToActive()
+        scheduleMigration()
+        log("carried to screen \(to)")
     }
 
     // MARK: Content
@@ -466,10 +529,25 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             log("POKE — the page received a click")
             return
         }
+        if body["type"] as? String == "grab" {
+            // Picked up: whatever screen change it was setting off on is off.
+            dragging = true
+            dragStarted = Date()
+            scheduleMigration()
+            log("GRAB — picked up")
+            return
+        }
+        if body["type"] as? String == "drop" {
+            dragging = false
+            log("DROP — put down at mouse (\(Int(NSEvent.mouseLocation.x)),\(Int(NSEvent.mouseLocation.y)))")
+            dropOnOtherScreen(gx: body["gx"] as? Double ?? 0, gy: body["gy"] as? Double ?? 0)
+            return
+        }
         if body["type"] as? String == "rect",
            let cx = body["x"] as? Double, let cy = body["y"] as? Double,
            let cw = body["w"] as? Double, let ch = body["h"] as? Double {
             s.lastRectAt = Date()
+            s.parked = body["parked"] as? Bool ?? false
             s.cssRect = NSRect(x: cx, y: cy, width: cw, height: ch)
             if abs(cx - s.lastX) > 1 { s.lastX = cx; s.stillSince = Date() }
             // CSS pixels → view points (× page zoom), top-left → bottom-left origin.

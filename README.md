@@ -90,6 +90,11 @@ when you click it).
 - **Reach for it and it stops.** The character notices the cursor coming within ~130px and
   holds still so you can actually click it — it walks and climbs far too briskly to hit
   otherwise. Tune with `defaults write com.warroom.claude-pulse buddyNoticeRadius -float 200`.
+- **In the way? Pick it up.** Drag the character anywhere, including onto the other screen,
+  and it stays there for ten minutes before it roams again. A flyer hovers where you let go;
+  a walker let go in mid-air drops to the floor first. It does not cross to the other screen
+  while it is staying put. A click without a drag still makes it talk. Change the stay with
+  `defaults write com.warroom.claude-pulse buddyStaySeconds -float 1800`.
 - Menu: pick any of the nine characters or your own image, and a size (Small → Huge).
 - It is the *same* `buddy.html` the VS Code panel uses — hosted in a transparent
   non-activating panel — so the art, animation and dialogue live in one place.
@@ -452,6 +457,10 @@ is in [LESSONS.md](LESSONS.md).
 
 ### The macOS app and its desktop buddy
 
+- **The desktop buddy keeps covering what I am working on** — drag it somewhere else, or onto
+  the other screen (since 0.17.0). It stays where you put it for ten minutes
+  (`buddyStaySeconds`). For less of it all the time, pick a smaller size under *Buddy Size*,
+  or switch *Desktop Buddy* off.
 - **Clicking items in the menu bar dropdown does nothing (e.g. picking a character)** — fixed
   in 0.13.0. The dropdown was being torn down and rebuilt four times a second while open to
   keep its timers live, which destroyed the *Buddy Character* submenu (and whatever item was

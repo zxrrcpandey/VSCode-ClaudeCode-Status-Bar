@@ -1,7 +1,7 @@
 # Lessons
 
 Everything that went wrong while building Claude Pulse, why it went wrong, and what the code
-does about it now — from the first status bar item to 0.16.1.
+does about it now — from the first status bar item to 0.17.0.
 
 The README's [Troubleshooting](README.md#troubleshooting) covers some of the same ground by
 symptom, for someone *using* Pulse. This file is for someone *changing* it. There are two ways
@@ -310,6 +310,20 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
 - **Art has a front.** The snail was drawn facing backwards and travelled tail first.
 - **The character list lives in three places** — `CHARS` in `buddy.html`, the list and picker
   in `extension.js`, the enum in `package.json` — and they have to change together.
+- **Something you can drag has to stay where it is put.** The character roamed everywhere,
+  and nothing could move it off what it covered. Now it can be picked up, and once let go it
+  parks until `parkUntil`. `scheduleNext()` and the flyers' rest both wait that out. The
+  host's hover pause used to set a 700 ms pause outright. It now only extends a pause, or the
+  first time the cursor came near it would have cut a ten-minute stay short. Screen crossings
+  wait too, and their long-wait fallback counts from the end of the stay. Otherwise the
+  character would set off for the edge the moment the stay ran out.
+- **A drag cannot leave the window it started in.** Each screen has its own panel, so the
+  page keeps the carried character inside its own stage. If the pointer is over the other
+  screen on release, the host carries the character across, keeping the same grip.
+- **Keep a dragged thing's window taking the mouse.** The panel is click-through except
+  where the page last said the character was, and that report comes every 100 ms, so a quick
+  drag outruns it. While carried, the panel stays clickable until the drop, or until the
+  button is seen up.
 
 ## Numbers people act on
 
@@ -377,6 +391,16 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
 - **Prove a click with a click.** The buddy fix was verified by warping the cursor onto the
   character and posting a real click, and the menu fix by driving the real menu through
   System Events.
+- **A synthetic click needs a click count.** A `CGEvent` posted without setting
+  `mouseEventClickState` did not always become a click in the page: one bee test run failed
+  its click check. Set to 1, as a real mouse sets it, the click registered first time in
+  every later run.
+- **Test the host in a bundle of its own.** `DesktopBuddy.swift` and `buddy.html` built into
+  a throwaway app with a different bundle identifier keep their settings in a separate
+  `defaults` domain, so the test cannot change the real character or size. The window
+  objects are in reach: the test reads the panel's hot rectangle and runs JavaScript in the
+  page. The installed app still has to be quit first, both for the lock and so that its
+  own character cannot catch the test's clicks.
 - **A gap between two manual steps looks like staleness.** A reading that seemed 39 minutes
   old "right after refreshing" was the time between the two commands. Check the file's own
   timestamp.
@@ -468,6 +492,7 @@ found by review or test did not reach a release.
 | 0.16.0 | Every window would ask at once | Windows scan in step | A stamp, re-read before asking | review |
 | 0.16.0 | Usage history wiped back and forth | Old extension build and new app, two formats | Matching builds; reload windows | in use |
 | 0.16.1 | Banner blocked the view | Draggable, but nothing showed it, and each banner started at the top centre again | Grab bar; each screen remembers its spot; kept on its own screen; double-click resets | reported |
+| 0.17.0 | Desktop character blocked the view | It roamed everywhere and could not be moved | Drag it anywhere, other screen too; it stays put ten minutes | reported |
 
 ## Known gaps
 
