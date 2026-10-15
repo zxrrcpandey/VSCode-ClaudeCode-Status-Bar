@@ -1,7 +1,7 @@
 # Lessons
 
 Everything that went wrong while building Claude Pulse, why it went wrong, and what the code
-does about it now — from the first status bar item to 0.16.0.
+does about it now — from the first status bar item to 0.16.1.
 
 The README's [Troubleshooting](README.md#troubleshooting) covers some of the same ground by
 symptom, for someone *using* Pulse. This file is for someone *changing* it. There are two ways
@@ -221,6 +221,17 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   evaluation put up the next, 356 ms later. A banner is only raised when none is on screen.
 - **Remove an observer before adding it again.** The screen-change handler was registered
   once per reload and ran that many times.
+- **A window that can move has to look movable, and stay where it was put.** The banner had
+  `isMovableByWindowBackground` from the start, and a synthetic drag moved it fine, but it
+  was still reported as blocking the view: nothing on the card said it could move, and the
+  next banner came back at the top centre anyway. The card now has a grab bar, and each
+  screen remembers where its card was left.
+- **Drag it yourself when it has to stay on one screen.** A drag the window server does for
+  `isMovableByWindowBackground` is not held to one screen, and nothing reports when it has
+  ended. One card per screen needs both. The card's view now takes the mouse-down and
+  follows the mouse with `nextEvent(matching:)` until it is let go, clamped to its own
+  screen. Its `hitTest` returns the card for everything except a button, so the title and
+  text work as handles too.
 
 ### Menus
 
@@ -456,6 +467,7 @@ found by review or test did not reach a release.
 | 0.16.0 | A manual check's result could be lost | Refresh returned early when busy | Callers queue | review |
 | 0.16.0 | Every window would ask at once | Windows scan in step | A stamp, re-read before asking | review |
 | 0.16.0 | Usage history wiped back and forth | Old extension build and new app, two formats | Matching builds; reload windows | in use |
+| 0.16.1 | Banner blocked the view | Draggable, but nothing showed it, and each banner started at the top centre again | Grab bar; each screen remembers its spot; kept on its own screen; double-click resets | reported |
 
 ## Known gaps
 

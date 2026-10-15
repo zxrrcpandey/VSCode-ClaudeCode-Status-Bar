@@ -8,6 +8,11 @@
 //
 // It never activates the app, so it cannot steal focus or a keystroke from
 // whatever you are typing into.
+//
+// It can be dragged anywhere on its screen by any part except a button, and
+// each screen remembers where its card was left, so a card that covered
+// something once does not come back over it. Double-click puts it back at the
+// top.
 
 import AppKit
 
@@ -55,13 +60,12 @@ final class AlertBanner: NSObject {
             // it is `frame` that carries the size it worked out — fittingSize
             // is zero for a view with no constraints, which gave a 0x0 panel.
             let size = card.frame.size
-            let vf = screen.visibleFrame
-            // Near the top, centred: where macOS puts things you must notice.
-            let origin = NSPoint(x: vf.midX - size.width / 2,
-                                 y: vf.maxY - size.height - 48)
-            let panel = BannerPanel(contentRect: NSRect(origin: origin, size: size),
+            let panel = BannerPanel(contentRect: NSRect(origin: .zero, size: size),
                                     styleMask: [.borderless, .nonactivatingPanel],
                                     backing: .buffered, defer: false)
+            panel.area = screen.visibleFrame
+            panel.display = Self.displayKey(screen)
+            let origin = place(panel, size: size)
             panel.isOpaque = false
             panel.backgroundColor = .clear
             panel.hasShadow = true
@@ -69,7 +73,15 @@ final class AlertBanner: NSObject {
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
             panel.isFloatingPanel = true
             panel.hidesOnDeactivate = false
-            panel.isMovableByWindowBackground = true
+            // The card drags itself (BannerContentView), so that it stays on
+            // its own screen and knows when a drag has finished.
+            panel.isMovableByWindowBackground = false
+            card.onMoved = { [weak self, weak panel] in
+                if let self, let panel { self.remember(panel) }
+            }
+            card.onReset = { [weak self, weak panel] in
+                if let self, let panel { self.forget(panel) }
+            }
             panel.contentView = card
             panel.alphaValue = 0
             panel.orderFrontRegardless()
@@ -116,9 +128,62 @@ final class AlertBanner: NSObject {
         })
     }
 
+    // MARK: Where it sits
+
+    /// Where each screen's card was last left, keyed by display, as fractions
+    /// of the room the card has to move in: 0 is the left or bottom edge, 1
+    /// the right or top. Fractions rather than points, so a taller card or a
+    /// changed resolution still lands in the same corner.
+    private static let spotsKey = "bannerSpots"
+
+    private static func displayKey(_ screen: NSScreen) -> String? {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.stringValue
+    }
+
+    /// Near the top, centred: where macOS puts things you must notice.
+    private static func defaultOrigin(_ size: NSSize, in area: NSRect) -> NSPoint {
+        NSPoint(x: area.midX - size.width / 2, y: area.maxY - size.height - 48)
+    }
+
+    private func place(_ panel: BannerPanel, size: NSSize) -> NSPoint {
+        let area = panel.area
+        let spots = UserDefaults.standard.dictionary(forKey: Self.spotsKey) as? [String: [Double]]
+        guard let key = panel.display, let s = spots?[key], s.count == 2 else {
+            return panel.clamp(Self.defaultOrigin(size, in: area), size: size)
+        }
+        return panel.clamp(NSPoint(x: area.minX + CGFloat(s[0]) * max(0, area.width - size.width),
+                                   y: area.minY + CGFloat(s[1]) * max(0, area.height - size.height)),
+                           size: size)
+    }
+
+    private func remember(_ panel: BannerPanel) {
+        guard let key = panel.display else { return }
+        let f = panel.frame, area = panel.area
+        let roomX = area.width - f.width, roomY = area.height - f.height
+        let fx = roomX > 0 ? Double((f.minX - area.minX) / roomX) : 0.5
+        let fy = roomY > 0 ? Double((f.minY - area.minY) / roomY) : 1
+        var spots = UserDefaults.standard.dictionary(forKey: Self.spotsKey) as? [String: [Double]] ?? [:]
+        spots[key] = [max(0, min(1, fx)), max(0, min(1, fy))]
+        UserDefaults.standard.set(spots, forKey: Self.spotsKey)
+    }
+
+    private func forget(_ panel: BannerPanel) {
+        if let key = panel.display,
+           var spots = UserDefaults.standard.dictionary(forKey: Self.spotsKey) as? [String: [Double]] {
+            spots[key] = nil
+            UserDefaults.standard.set(spots, forKey: Self.spotsKey)
+        }
+        let size = panel.frame.size
+        let home = panel.clamp(Self.defaultOrigin(size, in: panel.area), size: size)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            panel.animator().setFrame(NSRect(origin: home, size: size), display: true)
+        }
+    }
+
     // MARK: Layout
 
-    private func buildCard(_ spec: BannerSpec) -> NSView {
+    private func buildCard(_ spec: BannerSpec) -> BannerContentView {
         let width: CGFloat = 820
         let pad: CGFloat = 26
 
@@ -141,6 +206,10 @@ final class AlertBanner: NSObject {
         stripe.wantsLayer = true
         stripe.layer?.backgroundColor = spec.accent.cgColor
         root.addSubview(stripe)
+
+        // The grab bar along the top: says "this can be moved" without words.
+        let grip = GripView()
+        root.addSubview(grip)
 
         let iconLabel = NSTextField(labelWithString: spec.icon)
         iconLabel.font = .systemFont(ofSize: 40)
@@ -216,6 +285,7 @@ final class AlertBanner: NSObject {
         root.frame = NSRect(x: 0, y: 0, width: width, height: height)
         blur.frame = root.bounds
         stripe.frame = NSRect(x: 0, y: 0, width: 7, height: height)
+        grip.frame = NSRect(x: (width - 44) / 2, y: height - 9 - 5, width: 44, height: 5)
         iconLabel.frame = NSRect(x: pad + 4, y: height - pad - 46, width: 54, height: 46)
         return root
     }
@@ -266,11 +336,50 @@ final class GaugeView: NSView {
     }
 }
 
-/// Claude Pulse is an accessory app and never the active one, so without this
-/// the first click is spent activating the window instead of pressing the
-/// button — exactly the bug the desktop buddy had.
+final class GripView: NSView {
+    override func draw(_ dirty: NSRect) {
+        NSColor.tertiaryLabelColor.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+    }
+}
+
+/// The card itself, and the handle it is dragged by. Every part of it except
+/// a button answers the mouse here, so the title and the text move it too —
+/// the whole card is a handle, not just the bar along the top.
+///
+/// Claude Pulse is an accessory app and never the active one, so without
+/// acceptsFirstMouse the first click is spent activating the window instead
+/// of pressing the button — exactly the bug the desktop buddy had.
 final class BannerContentView: NSView {
+    var onMoved: (() -> Void)?
+    var onReset: (() -> Void)?
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        return hit is NSButton ? hit : self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let panel = window as? BannerPanel else { return }
+        if event.clickCount == 2 { onReset?(); return }
+        let grabbed = NSEvent.mouseLocation
+        let from = panel.frame.origin
+        var moved = false
+        // Follow the mouse until it is let go. Kept on the card's own screen,
+        // whole: a card half off the edge, or carried onto the other display
+        // to sit on top of that screen's card, helps nobody.
+        while let e = panel.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]),
+              e.type == .leftMouseDragged {
+            let p = NSEvent.mouseLocation
+            panel.setFrameOrigin(panel.clamp(NSPoint(x: from.x + p.x - grabbed.x,
+                                                     y: from.y + p.y - grabbed.y),
+                                             size: panel.frame.size))
+            moved = true
+        }
+        if moved { onMoved?() }
+    }
 }
 
 final class BannerButton: NSButton {
@@ -278,6 +387,17 @@ final class BannerButton: NSButton {
 }
 
 final class BannerPanel: NSPanel {
+    /// The visible frame of the screen this card was made for.
+    var area: NSRect = .zero
+    /// That screen's display number, which its remembered spot is filed under.
+    var display: String?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    func clamp(_ origin: NSPoint, size: NSSize) -> NSPoint {
+        guard area.width > 0 else { return origin }
+        return NSPoint(x: max(area.minX, min(origin.x, area.maxX - size.width)),
+                       y: max(area.minY, min(origin.y, area.maxY - size.height)))
+    }
 }

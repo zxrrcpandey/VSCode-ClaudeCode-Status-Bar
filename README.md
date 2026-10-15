@@ -191,7 +191,9 @@ at all — never a guess wearing the clothes of a measurement.
 - **A large banner on every screen** when it actually matters. It only interrupts when this
   pace would empty the window *before* it refills, or when you are nearly out outright: 80%
   with a reset twenty minutes away is not worth a warning, and crying wolf is how a warning
-  gets switched off. Snooze it, or turn it off under *Usage Warnings*.
+  gets switched off. Snooze it, or turn it off under *Usage Warnings*. If it covers something
+  you need, drag it anywhere on its screen (by any part except a button); that screen's next
+  banner comes up in the same place. Double-click it to send it back to the top.
 - **Being blocked** is reported from the transcript's own 429 record, which names the window
   that ran out and when it frees up. Hitting the 5-hour window is not the same as running out
   for the week, and the message says so.
@@ -443,6 +445,10 @@ is in [LESSONS.md](LESSONS.md).
   environment variable (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which Pulse reports instead of
   offering a switch), or a stricter size you gave that model with `/autocompact`. A chat
   that was already open picks the new size up when it is next started.
+- **A banner covers what I am working on** — drag it out of the way; it stays on the screen
+  it is on, and the next one on that screen appears where you left this one. Each screen
+  remembers its own place. Double-click a banner to put it back at the top. Since 0.16.1;
+  before that it could be dragged, but nothing showed it, and every banner started at the top.
 
 ### The macOS app and its desktop buddy
 
