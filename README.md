@@ -1,6 +1,137 @@
-# Claude Pulse
+<p align="center">
+  <img src="https://raw.githubusercontent.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/main/media/icon.png" width="96" alt="">
+</p>
 
-A tiny VS Code status bar indicator that always tells you what Claude Code is doing:
+<h1 align="center">Claude Pulse</h1>
+
+<p align="center">
+  Know what Claude Code is doing, and how much of your plan is left, without going to look.
+</p>
+
+<p align="center">
+  <a href="https://github.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/releases"><img src="https://img.shields.io/github/v/release/zxrrcpandey/VSCode-ClaudeCode-Status-Bar" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-13%2B-black?logo=apple" alt="macOS 13 or later">
+  <img src="https://img.shields.io/badge/VS%20Code-1.74%2B-007ACC?logo=visualstudiocode" alt="VS Code 1.74 or later">
+  <img src="https://img.shields.io/badge/dependencies-none-brightgreen" alt="No dependencies">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/zxrrcpandey/VSCode-ClaudeCode-Status-Bar" alt="MIT licence"></a>
+</p>
+
+Claude Pulse watches every Claude Code session on your machine and shows its state where you
+already look: the **VS Code status bar** and the **macOS menu bar**. It also counts your tokens,
+reads how much of your 5-hour and weekly limits is left, warns you before you run out, and
+gives you a small **animated character** that reacts to Claude — in a VS Code panel, or walking,
+climbing and flying across your real desktop on every monitor.
+
+It runs on Claude Code's own hooks and files. No API calls, no tokens, no account of its own.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/main/docs/images/characters.png" alt="The nine built-in characters: red panda, robot, cat, pup, tortoise, snail, bee, dragon and ghost">
+</p>
+
+**Contents**
+
+- [What it does](#what-it-does)
+- [Install](#install)
+- [The status indicator](#the-status-indicator) · [Subagents](#subagents)
+- [The macOS menu bar app](#the-macos-menu-bar-app)
+- [Token usage](#token-usage)
+- [Usage limits — knowing before you run out](#usage-limits--knowing-before-you-run-out)
+- [The buddy](#the-buddy) · [Desktop Buddy](#desktop-buddy--the-character-on-your-actual-screen)
+- [Multiple monitors](#multiple-monitors)
+- [How it works](#how-it-works) · [Tech stack](#tech-stack) · [Project layout](#project-layout)
+- [Building and testing](#building-and-testing)
+- [Settings and commands](#settings-and-commands)
+- [Privacy](#privacy) · [Uninstall](#uninstall) · [Troubleshooting](#troubleshooting)
+- [Lessons](#lessons) · [Licence](#licence)
+
+## What it does
+
+- **Every session's state at a glance** — working with a live timer, progress through
+  Claude's own task list, needs your input, done, or failed. Each VS Code window shows the
+  sessions in its own folders; the menu bar shows every session on the Mac, including ones
+  in a plain terminal. → [The status indicator](#the-status-indicator)
+- **Subagents** — how many are running, and for each one its task, type, elapsed time and
+  current tool. → [Subagents](#subagents)
+- **A notification when Claude needs you** (macOS app), so you can be looking somewhere
+  else. → [The macOS menu bar app](#the-macos-menu-bar-app)
+- **Exact token usage per model** — this session, today and the last 7 days, computed from
+  Claude Code's own transcripts. → [Token usage](#token-usage)
+- **Your plan limits before you hit them** — the 5-hour and weekly windows, the pace you are
+  using them at, when they refill, and a warning on every screen only when this pace would run
+  you out first. → [Usage limits](#usage-limits--knowing-before-you-run-out)
+- **Cheaper conversations** — a `/compact` nudge when a chat has grown expensive, a one-click
+  switch for Claude Code's own auto-compact point, and a reminder before an idle chat goes
+  cold. → [Why a long conversation is the expensive part](#why-a-long-conversation-is-the-expensive-part)
+- **A buddy** — nine hand-drawn animated characters, or your own image, that pace while
+  Claude works, ring when you are needed and celebrate when it is done. Click one and it
+  tells you the status. → [The buddy](#the-buddy)
+- **On your real desktop, across every monitor** (macOS app) — the buddy can leave VS Code
+  and roam all your screens above every app, crossing from one display to the next; clicks
+  pass straight through it. → [Multiple monitors](#multiple-monitors)
+- **Local** — hooks write small files; the extension and the app read them. The one thing
+  that reaches the network is your own Claude Code fetching a usage reading, and that can be
+  switched off. → [Privacy](#privacy)
+
+## Install
+
+### On a Mac — the app, with the VS Code extension included
+
+1. Download **`ClaudePulse-<version>.dmg`** from the
+   [releases page](https://github.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/releases).
+2. Drag **Claude Pulse** into Applications and open it.
+3. Choose **Set Up** when it offers to connect to Claude Code. It also offers the VS Code
+   extension when VS Code is installed, and to start with your Mac.
+4. Start a **new** Claude Code session. Hooks are read when a session starts, so sessions
+   already running will not report until they are restarted.
+
+That is the whole install:
+
+- **No Node.js, Xcode or repo needed.** The app carries `pulse-hook`, a small runner built on
+  JavaScriptCore (part of every Mac) that executes the very same hook, installer and
+  usage-scanner scripts the VS Code extension runs under Node. Setup copies it to
+  `~/.claude/claude-pulse/`, so the hooks keep working if the app is moved.
+- **macOS 13 or later, Apple Silicon or Intel** (universal binaries).
+- **A one-time "Open Anyway".** The build is ad-hoc signed, not notarized by Apple, so macOS
+  blocks the first open: on macOS 15+ open *System Settings → Privacy & Security* and click
+  *Open Anyway*; on 13–14 Control-click the app and choose *Open*. Or in Terminal:
+  `xattr -dr com.apple.quarantine /Applications/ClaudePulse.app`.
+- The menu has *Install VS Code Extension…* if you skipped it at setup.
+- Scripted installs: `/Applications/ClaudePulse.app/Contents/MacOS/ClaudePulse --setup-hooks`
+  (or `--remove-hooks`).
+
+### VS Code only
+
+The extension shows what the hooks write, so the hooks come first. Without the Mac app they
+run under Node.js.
+
+```sh
+git clone https://github.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar.git
+cd VSCode-ClaudeCode-Status-Bar
+node scripts/install-hooks.js     # wires the hooks into ~/.claude/settings.json; backs it up first; safe to re-run
+```
+
+Then install `claude-pulse-<version>.vsix` from the
+[releases page](https://github.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/releases):
+
+```sh
+code --install-extension claude-pulse-<version>.vsix
+```
+
+Reload every VS Code window (*Developer: Reload Window*) and start a new Claude Code session.
+From then on the extension keeps the installed hook in step with its own copy whenever it
+starts, so an update to the extension updates the hook too.
+
+### From source
+
+```sh
+node scripts/build-vsix.js                     # writes claude-pulse-<version>.vsix (no vsce; works on Node 18)
+cd macos && ./make-dmg.sh                      # builds the app, the vsix and ClaudePulse-<version>.dmg
+cd macos && ./build.sh --install               # or build the app and install it on this Mac only
+```
+
+See [Building and testing](#building-and-testing) for what each step needs.
+
+## The status indicator
 
 | State | Looks like | When |
 |---|---|---|
@@ -11,95 +142,22 @@ A tiny VS Code status bar indicator that always tells you what Claude Code is do
 | Done | `✓ Claude · done 2:14` | Claude finished; shows total time, fades to idle |
 | Error | `⚠ Claude · error` (red) | Response died (API error / connection lost); fades to idle |
 
-**Local, and zero cost.** The hooks run a small local Node script; the extension watches a
-state file. No API calls, no tokens. Pulse itself never touches the network — the one
-exception is [keeping the usage reading fresh](#keeping-the-reading-fresh), where it has your
-own Claude Code run `/usage`, and that can be switched off.
+- **Each VS Code window shows its own sessions** — the ones running inside its workspace
+  folders — so two windows on two projects never show each other's work. Set
+  `claudePulse.allProjects: true` for a global view. A session is matched by every folder it
+  has reported, so one whose shell `cd`s elsewhere stays attached to the window it started in.
+- **Any session waiting on you takes priority**, and several busy sessions show as `×N`.
+- **Hover** for a breakdown: every session in the window with its state, task progress and
+  current tool, its running subagents, then token counts and plan limits. **Click** to list
+  the sessions and focus a terminal, or reset a stuck state.
+- **It sits at the far-right edge** of the status bar by default, because VS Code hides
+  items from the middle of the bar first when a window is narrow.
+- **"Needs input" means needed.** Claude Code fires `PermissionRequest` for auto-approved
+  calls too, so only confirmed prompts turn it yellow: an unanswered dialog, a question
+  (`AskUserQuestion`, `ExitPlanMode`), or an agent asking for input. See
+  [Troubleshooting](#the-indicator) for the timing rules.
 
-## macOS menu bar app
-
-The same indicator, outside the editor: a native menu bar app (`macos/`) that reads the very
-same state files, so it shows **every** Claude Code session on the Mac — including ones in
-other windows, other editors, or a plain terminal.
-
-### Install on any Mac
-
-Download **`ClaudePulse-<version>.dmg`** from the
-[releases page](https://github.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/releases), drag
-Claude Pulse into Applications, open it, and choose **Set Up** when it offers to connect to
-Claude Code. That is the whole install:
-
-- **No Node.js, Xcode or repo needed.** The app carries `pulse-hook`, a small runner built on
-  JavaScriptCore (part of every Mac) that executes the very same hook, installer and
-  usage-scanner scripts the VS Code extension runs under Node. Setup copies it to
-  `~/.claude/claude-pulse/`, so the hooks keep working if the app is moved.
-- **The VS Code extension is included** — setup offers it when VS Code is installed, and the
-  menu has *Install VS Code Extension…*.
-- **macOS 13 or later, Apple Silicon or Intel** (universal binaries).
-- **A one-time "Open Anyway".** The build is ad-hoc signed, not notarized by Apple, so macOS
-  blocks the first open: on macOS 15+ open *System Settings → Privacy & Security* and click
-  *Open Anyway*; on 13–14 Control-click the app and choose *Open*. Or in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/ClaudePulse.app`.
-- Scripted installs: `/Applications/ClaudePulse.app/Contents/MacOS/ClaudePulse --setup-hooks`
-  (or `--remove-hooks`).
-
-Build it yourself with `cd macos && ./make-dmg.sh` (the disk image), or
-`./build.sh --install` for this Mac only.
-
-- Menu bar: `⣾ 4:46 · 3⚙` while working (spinner, elapsed, running agents), `3/7 ▰▰▰▱▱▱▱`
-  when Claude is following a checklist, an orange `🔔 needs input` when you are actually
-  needed, `✓ 2:14` on completion, `⚠ error` when a response dies. `×N` means several
-  sessions are busy.
-- Drop-down: every session with its project, state, current tool and checklist, each running
-  subagent (task, type, elapsed, tools), how much of your plan is left and how fast it is
-  going, and token usage for today and the last 7 days. Click a session to open its folder.
-- **Notifies you** when a session needs input — the point of a menu bar app is that you can
-  be looking somewhere else — and warns you before a usage limit stops you.
-- **Starts with your Mac.** It offers this the first time it is set up, and the menu's
-  *Open at Login* turns it on or off afterwards. It registers properly in System Settings ›
-  General › Login Items; if macOS refuses that for an unsigned build, it falls back to a
-  LaunchAgent in your own home folder. Only ever one of the two, so you never get two icons.
-- Native Swift, no Xcode project and no dependencies: `build.sh` compiles a universal
-  binary with `swiftc` and assembles the `.app`. Same waiting-state rules as the extension
-  (see `scripts/test-waiting.js`).
-
-### Desktop Buddy — the character on your actual screen
-
-What VS Code could not do: enable **Desktop Buddy** in the menu and the character leaves the
-panel and roams your real desktop, above every other app. The screen edges are its world —
-it walks along the bottom, climbs the sides, crosses the top upside down or hangs from it,
-and reacts to Claude exactly as it does in the editor (pacing while working, flailing when
-you are needed, speech bubbles when you click it).
-
-- **One panel per screen**, and every minute or two the buddy **crosses** to the other one:
-  it heads for the edge facing it and carries on from the opposite edge of the next screen
-  at the same height — a bee flies off the right of one display and in from the left of the
-  next. macOS defaults to *Displays have separate Spaces*, under which a single window
-  cannot span two displays — it is pinned to one and clipped there, so a spanning window
-  makes the buddy vanish on the other screen. Panels are rebuilt when a monitor is plugged
-  in, unplugged or rearranged. Tune the hop with
-  `defaults write com.warroom.claude-pulse buddyMigrateSeconds -float 30`.
-- **Flyers use the whole height** of wherever they live — the bee, dragon and ghost roam
-  from the floor to just under the top of the screen.
-- **Size is a page zoom**, not a CSS zoom on the sprite: in WebKit, CSS `zoom` also scales
-  the element's *position*, which sent a 1.6× bee off the right of the screen and left
-  hearts, flowers and speech bubbles far from it. With page zoom everything scales together.
-- **Clicks pass straight through** to whatever is underneath — the page reports where the
-  character is and only that small rectangle is clickable, so the buddy can never swallow a
-  click meant for another app.
-- **Reach for it and it stops.** The character notices the cursor coming within ~130px and
-  holds still so you can actually click it — it walks and climbs far too briskly to hit
-  otherwise. Tune with `defaults write com.warroom.claude-pulse buddyNoticeRadius -float 200`.
-- **In the way? Pick it up.** Drag the character anywhere, including onto the other screen,
-  and it stays there for ten minutes before it roams again. A flyer hovers where you let go;
-  a walker let go in mid-air drops to the floor first. It does not cross to the other screen
-  while it is staying put. A click without a drag still makes it talk. Change the stay with
-  `defaults write com.warroom.claude-pulse buddyStaySeconds -float 1800`.
-- Menu: pick any of the nine characters or your own image, and a size (Small → Huge).
-- It is the *same* `buddy.html` the VS Code panel uses — hosted in a transparent
-  non-activating panel — so the art, animation and dialogue live in one place.
-
-## Subagents
+### Subagents
 
 When Claude spawns subagents (the Agent tool, workflows, parallel reviewers), the indicator
 shows **how many are running** — `⟳ Claude · working 4:46 · 3 agents` — and the tooltip /
@@ -109,6 +167,32 @@ the `Agent` tool call carries the task description, and every tool event from in
 subagent carries its `agent_id`. Parallel agents write state concurrently, so the hook uses
 a lock file around each update. Set `touch ~/.claude/claude-pulse/debug` to log raw hook
 payloads to `~/.claude/claude-pulse/events.log` when investigating.
+
+## The macOS menu bar app
+
+The same indicator, outside the editor: a native menu bar app (`macos/`) that reads the very
+same state files, so it shows **every** Claude Code session on the Mac — including ones in
+other windows, other editors, or a plain terminal.
+
+- **Menu bar:** `⣾ 4:46 · 3⚙` while working (spinner, elapsed, running agents), `3/7 ▰▰▰▱▱▱▱`
+  when Claude is following a checklist, an orange `🔔 needs input` when you are actually
+  needed, `✓ 2:14` on completion, `⚠ error` when a response dies. `×N` means several
+  sessions are busy.
+- **Drop-down:** every session with its project, state, current tool and checklist, each
+  running subagent (task, type, elapsed, tools), how much of your plan is left and how fast it
+  is going, and token usage for today and the last 7 days. Click a session to open its folder.
+- **Notifies you** when a session needs input — the point of a menu bar app is that you can
+  be looking somewhere else — and warns you before a usage limit stops you.
+- **Starts with your Mac.** It offers this the first time it is set up, and the menu's
+  *Open at Login* turns it on or off afterwards. It registers properly in System Settings ›
+  General › Login Items; if macOS refuses that for an unsigned build, it falls back to a
+  LaunchAgent in your own home folder. Only ever one of the two, so you never get two icons.
+- **The menu** also holds *Desktop Buddy*, *Buddy Character*, *Buddy Size*, *Usage Warnings*
+  (with *Check Usage Now* and previews of each warning), *Compact Chats Automatically*, *Show
+  Usage in Claude Code*, *Reset Session States*, and setting up or removing the hooks.
+- Native Swift, no Xcode project and no dependencies: `build.sh` compiles a universal
+  binary with `swiftc` and assembles the `.app`. Same waiting-state rules as the extension
+  (see `scripts/test-waiting.js`).
 
 ## Token usage
 
@@ -123,6 +207,7 @@ transcript files (`~/.claude/projects/**/*.jsonl`) — still no API calls:
   report across all projects.
 - The scan runs in a background process every 30 s with an incremental byte-offset cache,
   so it reads only newly appended transcript lines. Repeated message ids are deduplicated.
+
 ## Usage limits — knowing before you run out
 
 Claude Code asks the server how much of your plan is left and caches the answer in
@@ -177,6 +262,8 @@ does it on demand; in VS Code those are `claudePulse.keepUsageFresh` and **Claud
 Usage Now**. Where the macOS app is running it does the checking and the extension stands
 back, so the two never both ask. From a terminal: `ClaudePulse --check-usage`.
 
+### Pace, and how far it can be trusted
+
 To stretch a good reading further, Pulse keeps a small local ledger of what the transcripts
 say you have spent, per minute, and pairs two cached readings with the tokens spent between
 them to learn what one percent costs. From then on it carries the figure forward and can say
@@ -189,6 +276,8 @@ when the step came from the same plan tier; a per-model window is measured again
 model's own spend. Three such pairs are needed before any of it is shown, because a median of
 one is not a median. Until then you get the cached number labelled *last checked*, or nothing
 at all — never a guess wearing the clothes of a measurement.
+
+### Where the warnings show
 
 - **The menu bar / status bar** carries a small badge once a window is worth watching
   (`wk 62%`), amber then red as it gets worse. It stays visible when no session is running —
@@ -285,12 +374,13 @@ After a conversation has gone cold the advice changes, because compacting it wou
 load it first. The menu and the tooltip then say so — *"gone cold at 3:42 PM — the next
 message reloads all of it. Done with it? Start a new chat."*
 
-## Buddy — a character that reacts to Claude
+## The buddy
 
 **View → Open View… → "Buddy"** (or run *Claude Pulse: Open Buddy*) adds a panel tab with a
 little character that mirrors Claude's state: paces while Claude works, hops and rings when
 Claude needs you, sleeps when idle, celebrates on done, goes dizzy on errors. **Click it and
-it talks back** — real status, task progress, and token counts in speech bubbles.
+it talks back** — real status, task progress, and token counts in speech bubbles, calling you
+by the first name in your git config (or `claudePulse.buddyName`).
 
 Nine built-in characters with different bodies and personalities, each drawn with shading,
 fur or scales, and eyes that blink, close for a nap and squeeze shut on an error:
@@ -299,62 +389,290 @@ fur or scales, and eyes that blink, close for a nap and squeeze shut on an error
 🐝 Bee (a honeybee, zips around the whole panel), 🐉 Dragon (big, slow wingbeats, glides
 everywhere), 👻 Ghost (floats).
 
-The red panda, robot, cat, pup and snail climb the walls and cross the ceiling upside down,
-head first. The five with legs also leap for the ceiling, each with its own success rate.
-One that catches it turns over and hangs upside down for two to five seconds, swinging a
-little: the red panda and robot by their feet, the cat, pup and tortoise by all four paws.
-Then it crawls off along the ceiling, or lets go, rolls over and lands on its feet. The
-tortoise cannot climb, so it always lets go.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/main/docs/images/panel.png" width="620" alt="Five characters drawn into one panel at different moments: a pup walking on the floor, a red panda climbing the right wall, a robot walking upside down along the ceiling, a cat hanging from the ceiling by all four paws, and a bee flying">
+</p>
+
+The panel is the character's whole world. The red panda, robot, cat, pup and snail climb the
+walls and cross the ceiling upside down, head first. The five with legs also leap for the
+ceiling, each with its own success rate. One that catches it turns over and hangs upside down
+for two to five seconds, swinging a little: the red panda and robot by their feet, the cat,
+pup and tortoise by all four paws. Then it crawls off along the ceiling, or lets go, rolls
+over and lands on its feet. The tortoise cannot climb, so it always lets go. Flyers use the
+whole height. (The picture above is several moments drawn into one panel; only one character
+is on screen at a time.)
 
 **Use your own character:** run *Claude Pulse: Choose Buddy Character* and pick any image —
 PNG, JPG, WebP, SVG, or an animated GIF (`claudePulse.buddyImage` holds the path). The
 built-in red panda is the fallback. VS Code has no floating-overlay surface, so the character
 lives in its own panel (the same approach vscode-pets uses) — it cannot walk over the editor.
+For that, there is the Desktop Buddy.
+
+### Desktop Buddy — the character on your actual screen
+
+What VS Code could not do: enable **Desktop Buddy** in the macOS app's menu and the character
+leaves the panel and roams your real desktop, above every other app. The screen edges are its
+world — it walks along the bottom, climbs the sides, crosses the top upside down or hangs from
+it, and reacts to Claude exactly as it does in the editor (pacing while working, flailing when
+you are needed, speech bubbles when you click it).
+
+- **Clicks pass straight through** to whatever is underneath — the page reports where the
+  character is and only that small rectangle is clickable, so the buddy can never swallow a
+  click meant for another app. It never takes focus from the app you are typing in.
+- **Reach for it and it stops.** The character notices the cursor coming within ~130px and
+  holds still so you can actually click it — it walks and climbs far too briskly to hit
+  otherwise. Tune with `defaults write com.warroom.claude-pulse buddyNoticeRadius -float 200`.
+- **In the way? Pick it up.** Drag the character anywhere, including onto another screen,
+  and it stays there for ten minutes before it roams again. A flyer hovers where you let go;
+  a walker let go in mid-air drops to the floor first. It does not cross to another screen
+  while it is staying put. A click without a drag still makes it talk. Change the stay with
+  `defaults write com.warroom.claude-pulse buddyStaySeconds -float 1800`.
+- **Flyers use the whole height** of wherever they live — the bee, dragon and ghost roam
+  from the floor to just under the top of the screen.
+- **Size is a page zoom**, not a CSS zoom on the sprite: in WebKit, CSS `zoom` also scales
+  the element's *position*, which sent a 1.6× bee off the right of the screen and left
+  hearts, flowers and speech bubbles far from it. With page zoom everything scales together.
+  *Buddy Size* offers Small, Normal, Large and Huge (0.7×, 1×, 1.6×, 2.4×).
+- **It recovers by itself.** If macOS kills the page's web process under memory pressure the
+  buddy reloads, and a watchdog revives it if the page stops reporting its position for 5 s.
+- Menu: pick any of the nine characters or your own image, and a size.
+- It is the *same* `buddy.html` the VS Code panel uses — hosted in a transparent
+  non-activating panel — so the art, animation and dialogue live in one place.
+
+## Multiple monitors
+
+Claude Pulse was built and used on a Mac with two displays side by side, and everything that
+draws on the desktop is made for more than one screen.
+
+- **One buddy panel per screen.** macOS defaults to *Displays have separate Spaces*, under
+  which a single window cannot span two displays — it is pinned to one and clipped there, so a
+  spanning window makes the buddy vanish on the other screen. Each screen gets its own
+  transparent panel instead, sized to that screen's visible area, so the menu bar and the Dock
+  are its ceiling and floor.
+- **The buddy travels between them.** Every 45 to 150 seconds it decides to move on. It
+  waits until it happens to be near the edge that faces the next screen (within 360 px, or
+  three minutes have passed), dashes or flies off it, and carries on from the opposite edge of
+  the next screen at the same height — a bee flies off the right of one display and in from
+  the left of the next. Fix the interval with
+  `defaults write com.warroom.claude-pulse buddyMigrateSeconds -float 30`.
+- **Side by side or stacked.** Side by side, it leaves by the edge facing the other display.
+  Stacked one above the other there is no facing edge, so it leaves by the nearer side and
+  comes in on the same side, a short hop rather than a diagonal one. With three or more
+  screens it visits them in turn.
+- **Drag it to another screen.** A drag cannot leave the panel it started in, so when you
+  let go over another display the app carries the character across to the pointer, keeping
+  the same grip. Let go over the menu bar or past an edge and it still lands on screen.
+- **Plug in, unplug, rearrange.** The panels are rebuilt whenever a display is added,
+  removed or moved, so each one always matches exactly one screen.
+- **Every Space, and beside full-screen apps.** The panels are set to appear on every Space
+  and to be allowed in the Space of a full-screen app.
+- **Only the screen with the character takes a click**, and only over the character; every
+  other panel lets the mouse straight through.
+- **Warnings go on every screen**, since you may be looking at either. Each banner can be
+  dragged anywhere on its own screen, each display remembers where its banner was left, and
+  the next one on that display comes up in the same place. Double-click sends it back to the
+  top. Banners are rebuilt too when the displays change.
+- **VS Code windows on any screen** each show their own workspace's sessions.
 
 ## How it works
 
-1. Hook entries in `~/.claude/settings.json` run `~/.claude/claude-pulse/hook.js` on Claude Code
-   lifecycle events (prompt submitted, tool use, permission request, stop, session end).
-2. The script writes `~/.claude/claude-pulse/state/<session_id>.json` — current state, tool,
-   todo progress, timestamps. One file per session, so multiple sessions work.
-3. The extension watches that folder and renders the status bar item. Each VS Code window
-   only shows sessions running inside its own workspace folders (set
-   `claudePulse.allProjects: true` for a global view). Any session waiting on you takes
-   priority. Click the item to list sessions / focus the terminal.
-
-## Install
-
-```sh
-# Run the regression suites (each builds its own throwaway HOME):
-#   node scripts/test-waiting.js                       # the waiting-state rules
-#   node scripts/test-limits.js                        # the usage-limit maths
-#   node scripts/test-autocompact.js                   # what the auto-compact script leaves alone
-# …and the same two suites through the runtime the macOS app uses:
-#   PULSE_LIMITS_BIN=/Applications/ClaudePulse.app/Contents/MacOS/pulse-hook \
-#     node scripts/test-limits.js
-#   PULSE_LIMITS_BIN=/Applications/ClaudePulse.app/Contents/MacOS/pulse-hook \
-#     node scripts/test-autocompact.js
-
-# 1. Wire up the hooks (backs up settings.json first; idempotent)
-node scripts/install-hooks.js
-
-# 2. Install the extension (pick one)
-#    a) folder copy:
-mkdir -p ~/.vscode/extensions/warroom.claude-pulse-0.1.0
-cp package.json extension.js ~/.vscode/extensions/warroom.claude-pulse-0.1.0/
-#    b) or build a .vsix (no vsce needed, works on Node 18):
-#       node scripts/build-vsix.js && code --install-extension claude-pulse-*.vsix
-
-# 3. Fully restart VS Code, then start a NEW Claude Code session
+```
+Claude Code ──12 hook events──▶ hook.js ──▶ ~/.claude/claude-pulse/state/<session>.json ──┐
+Claude Code transcripts (~/.claude/projects/**/*.jsonl) ──▶ usage-scan.js  (tokens) ──────┤
+Claude Code's cached usage (~/.claude.json) ──────────▶ limits-scan.js (limits, pace) ────┤
+                                                                                          │
+              ┌─────────────────────────────────────┬─────────────────────────────────────┘
+              ▼                                     ▼
+  ┌────────────────────────┐            ┌────────────────────────────────┐
+  │ VS Code extension      │            │ macOS menu bar app             │
+  │ status bar · tooltip   │            │ menu · notifications           │
+  │ commands               │            │ banners on every screen        │
+  │ Buddy panel            │            │ Desktop Buddy on every screen  │
+  └────────────────────────┘            └────────────────────────────────┘
+                       both host the same buddy.html
 ```
 
-Hooks are read when a session starts — sessions already running won't report until restarted.
+1. Hook entries in `~/.claude/settings.json` run `~/.claude/claude-pulse/hook.js` on Claude
+   Code's lifecycle events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+   `PostToolUseFailure`, `PermissionRequest`, `Notification`, `Stop`, `StopFailure`,
+   `SubagentStart`, `SubagentStop` and `SessionEnd`. Under the Mac app the command is
+   `pulse-hook` instead of `node`; the script is the same.
+2. The script writes `~/.claude/claude-pulse/state/<session_id>.json` — current state, tool,
+   todo progress, subagents, timestamps. One file per session, so multiple sessions work, and
+   a lock file around each update, because parallel agents run hooks at the same moment.
+3. The extension watches that folder and renders the status bar item; the macOS app reads the
+   same files. Neither needs the other.
+4. Token usage and plan limits come from separate scans run in a background process —
+   `usage-scan.js` over the transcripts, `limits-scan.js` over the cached usage reading and a
+   small per-minute ledger in `~/.claude/claude-pulse/limits-history.json`. The extension and
+   the app run the same two scripts, so they always agree.
+5. The buddy is one web page, `buddy.html`. VS Code hosts it in a webview panel; the macOS app
+   hosts it in a `WKWebView` per screen and gives it the same small messaging API. Both send it
+   the same state payload.
+
+## Tech stack
+
+| Part | Built with |
+|---|---|
+| VS Code extension | Plain JavaScript, VS Code API 1.74+, **no npm dependencies**. A status bar item, a `WebviewView` panel for the buddy, and a file-system watcher on the state folder. The scans run in a child process on VS Code's own runtime (`ELECTRON_RUN_AS_NODE`), so the editor does not wait on them and needs no Node.js of its own. |
+| Hooks | `hooks/hook.js`, a Node-style script Claude Code runs on 12 lifecycle events. Writes one JSON file per session, atomically, under a lock file. |
+| macOS app | **Swift** with AppKit, no Xcode project and no dependencies. `NSStatusItem` for the menu bar, `UserNotifications`, `ServiceManagement` (`SMAppService`) with a LaunchAgent fallback for starting at login, **WebKit** (`WKWebView` in non-activating `NSPanel`s) for the desktop buddy, and plain AppKit for the warning banners, so a killed web process can never blank a warning. |
+| `pulse-hook` | A small runner on **JavaScriptCore**, which ships with every Mac. It provides the slice of Node's `fs`, `path`, `os`, `process` and `console` the scripts use, so the very same hook, installer and scanner scripts run on a Mac with no Node.js. |
+| Buddy | One self-contained `buddy.html`: nine hand-drawn **SVG** characters animated with `requestAnimationFrame` and CSS transforms. Each moving part is its own composited layer, so the GPU moves pictures painted once rather than redrawing the drawing every frame. A strict content security policy with a per-load nonce; custom images are inlined as `data:` URIs. |
+| Build | `build.sh` compiles with `xcrun swiftc` for arm64 and x86_64 and joins them with `lipo` into a universal binary, then signs ad hoc. `make-dmg.sh` packs the disk image with `hdiutil`. `build-vsix.js` writes the extension manifest and zips the package itself, so it needs no `vsce` and runs on Node 18. `make-icon.swift` draws the app icon natively at each size. |
+| Tests | Node scripts, each building a throwaway `HOME` so it cannot touch your real setup, run under Node and again under `pulse-hook` so both runtimes give the same answers. |
+
+## Project layout
+
+```
+extension.js            the VS Code extension: status bar, tooltip, commands, Buddy panel
+buddy.html              the buddy: art, animation, dialogue (shared by VS Code and the Mac app)
+hooks/hook.js           what Claude Code runs on each event; writes the per-session state
+usage-scan.js           token usage from the transcripts, incremental by byte offset
+limits-scan.js          plan limits, pace and the ledger; also the Claude Code status line
+scripts/
+  install-hooks.js      wires the hooks into ~/.claude/settings.json (backed up first)
+  uninstall-hooks.js    removes everything Pulse added
+  install-statusline.js "Show Usage in Claude Code"
+  set-autocompact.js    Claude Code's autoCompactWindow, without exempting a model by accident
+  build-vsix.js         packages the extension without vsce
+  test-waiting.js       the waiting-state rules
+  test-limits.js        the usage-limit maths
+  test-autocompact.js   what the auto-compact script leaves alone
+macos/
+  ClaudePulse.swift     the menu bar app
+  DesktopBuddy.swift    one transparent panel per screen, hosting buddy.html
+  AlertBanner.swift     the warning card, one per screen
+  LimitAlerts.swift     when to warn, and what to say
+  Limits.swift          runs limits-scan.js; the warning thresholds
+  LoginItem.swift       SMAppService, with a LaunchAgent fallback
+  PulseHook.swift       pulse-hook, the JavaScriptCore runner
+  Setup.swift           first-run setup
+  build.sh, make-dmg.sh, icon/
+LESSONS.md              every bug, its cause and its fix, by subject and by version
+```
+
+## Building and testing
+
+Building needs only Apple's Command Line Tools (for `swiftc`, `lipo` and `hdiutil`) and
+Node.js 18 or later for the extension package and the tests.
+
+```sh
+node scripts/build-vsix.js          # → claude-pulse-<version>.vsix
+cd macos && ./build.sh              # → macos/build/ClaudePulse.app (universal)
+cd macos && ./build.sh --install    # the same, installed to /Applications and started
+cd macos && ./make-dmg.sh           # the app, the vsix and ClaudePulse-<version>.dmg
+```
+
+With [swiftly](https://www.swift.org/install/) installed, plain `swiftc` is the wrong
+compiler; `build.sh` already calls `xcrun swiftc` with the SDK for that reason.
+
+The regression suites each build their own throwaway `HOME`, so they are safe to run on a
+machine with Pulse installed:
+
+```sh
+node scripts/test-waiting.js        # the waiting-state rules
+node scripts/test-limits.js         # the usage-limit maths
+node scripts/test-autocompact.js    # what the auto-compact script leaves alone
+
+# …and the same suites through the runtime the macOS app uses:
+PULSE_HOOK_BIN=/Applications/ClaudePulse.app/Contents/MacOS/pulse-hook node scripts/test-waiting.js
+PULSE_LIMITS_BIN=/Applications/ClaudePulse.app/Contents/MacOS/pulse-hook node scripts/test-limits.js
+PULSE_LIMITS_BIN=/Applications/ClaudePulse.app/Contents/MacOS/pulse-hook node scripts/test-autocompact.js
+```
+
+The two runtimes must agree. The app's single-instance lock lives in the real home folder, so
+quit an installed copy before testing a fresh build.
+
+## Settings and commands
+
+### VS Code settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `claudePulse.allProjects` | off | Show sessions from every project in every window, not just the window's own folders |
+| `claudePulse.alignment` / `claudePulse.priority` | right / −900 | Where the indicator sits; the default far-right edge survives narrow windows |
+| `claudePulse.doneDisplaySeconds` | 15 | How long the ✓ stays before fading to idle |
+| `claudePulse.showElapsed` | on | The live timer while working |
+| `claudePulse.showTokens` | on | The session's output tokens while Claude works |
+| `claudePulse.waitingTimeoutSeconds` | 45 | A confirmed *permission* prompt reverts to working this long after the last confirmation, since approving fires no event; questions and agent prompts are never aged out; 0 disables |
+| `claudePulse.provisionalWaitSeconds` | 0 (never) | Show *unconfirmed* permission requests as "needs input" after this many seconds |
+| `claudePulse.showLimits` | on | How much of your plan is left |
+| `claudePulse.limitWarnWeekly` / `claudePulse.limitWarnSession` | 75 / 88 | The percentages that turn the indicator amber |
+| `claudePulse.contextWarnTokens` | 300000 | Flag a conversation once it carries this much context |
+| `claudePulse.awayReminder` | on | Say so about fifteen minutes before a large, idle conversation stops being cheap to come back to |
+| `claudePulse.awayWarnTokens` | 200000 | How large it has to be for that |
+| `claudePulse.keepUsageFresh` | on | Have Claude Code fetch a new usage reading once the one it holds has aged out; costs no tokens |
+| `claudePulse.buddyCharacter` | `critter` | `critter` (red panda), `robot`, `cat`, `pup`, `turtle` (tortoise), `snail`, `bee`, `dragon`, `ghost` |
+| `claudePulse.buddyImage` | empty | Path to your own image (PNG, JPG, WebP, SVG, animated GIF) |
+| `claudePulse.buddyName` | from git | The name the buddy calls you |
+| `claudePulse.buddyUsageRemarks` | on | Let the character mention a limit out loud; separate from `showLimits`, so you can keep the quiet badge without the commentary |
+
+### VS Code commands
+
+| Command | What it does |
+|---|---|
+| Claude Pulse: Open Buddy | Opens the Buddy panel |
+| Claude Pulse: Choose Buddy Character | Picks a built-in character or your own image |
+| Claude Pulse: Show Claude Sessions | Lists the sessions; focus a terminal or reset |
+| Claude Pulse: Reset Session States | Clears stuck states |
+| Claude Pulse: Token Usage Report | The full report across all projects |
+| Claude Pulse: Show Usage Inside Claude Code | Adds the status line under the Claude Code prompt |
+| Claude Pulse: Compact Conversations Automatically | Sets Claude Code's auto-compact point |
+| Claude Pulse: Check Usage Now | Asks Claude Code for a fresh usage reading |
+
+### macOS app
+
+Most of these are in the menu. All of them, including the same thresholds as the extension,
+are read from the app's own domain and set with
+`defaults write com.warroom.claude-pulse <key> …`:
+
+| Key | Default | What it does |
+|---|---|---|
+| `limitWatchWeekly` / `limitWatchSession` | 50 / 70 | Percent at which the badge appears |
+| `limitWarnWeekly` / `limitWarnSession` | 75 / 88 | Percent at which it turns amber |
+| `limitCriticalWeekly` / `limitCriticalSession` | 90 / 96 | Percent at which it turns red |
+| `contextWarnTokens` | 300000 | When a conversation counts as expensive |
+| `awayWarnTokens` | 200000 | How large an idle chat has to be for the reminder |
+| `limitAlerts` | true | `false`: no banners |
+| `contextNudge` | true | `false`: no `/compact` nudge |
+| `awayNudge` | true | `false`: no idle-chat reminder |
+| `usageAutoCheck` | true | `false`: never ask Claude Code for a reading |
+| `notifyOnInput` | true | Notify when a session needs input |
+| `doneFadeSeconds` | 15 | How long ✓ stays |
+| `waitTimeoutSeconds` / `provisionalWaitSeconds` | 45 / 0 | As `waitingTimeoutSeconds` and `provisionalWaitSeconds` in VS Code |
+| `buddyStaySeconds` | 600 | How long the desktop buddy stays where you put it |
+| `buddyNoticeRadius` | 130 | How close the cursor gets before it stops to be clicked |
+| `buddyMigrateSeconds` | 45–150, random | Time between screen crossings |
+| `buddyName` | from git | The name it calls you |
+| `buddyDebug` | false | Trace hover and clicks to `~/.claude/claude-pulse/buddy-debug.log` |
+
+```bash
+defaults write com.warroom.claude-pulse limitWarnWeekly -int 60
+defaults write com.warroom.claude-pulse limitAlerts -bool false     # no banners
+defaults write com.warroom.claude-pulse buddyMigrateSeconds -float 30
+```
+
+From a terminal: `ClaudePulse --setup-hooks`, `--remove-hooks`, `--check-usage`,
+`--autocompact 250000` or `--autocompact default`.
+
+## Privacy
+
+- **What it reads:** Claude Code's hook events, its transcripts under `~/.claude/projects/`,
+  its cached usage in `~/.claude.json`, and `~/.claude/settings.json`.
+- **What it writes:** its own folder, `~/.claude/claude-pulse/`. It changes
+  `~/.claude/settings.json` only to add or remove its hooks, the optional status line and the
+  optional auto-compact size, and backs the file up first every time. It never writes to
+  `~/.claude.json` or to a transcript.
+- **What reaches the network:** nothing of Pulse's own — no API calls, no telemetry, no tokens.
+  The one exception is [keeping the usage reading fresh](#keeping-the-reading-fresh), where it
+  has your own Claude Code run `/usage`, and that can be switched off.
 
 ## Uninstall
 
 ```sh
 node scripts/uninstall-hooks.js
-rm -rf ~/.vscode/extensions/warroom.claude-pulse-0.1.0
+code --uninstall-extension warroom.claude-pulse
 ```
 
 That removes the hooks, the Claude Code status line if you added one, `~/.claude/claude-pulse/`
@@ -482,7 +800,9 @@ is in [LESSONS.md](LESSONS.md).
   character moved out from under the cursor before the click landed (it now stops when your
   cursor comes near), and macOS was spending the click activating the window instead of
   delivering it, because Claude Pulse is an accessory app that is never the active app — the
-  view now accepts that first click. `defaults write com.warroom.claude-pulse buddyDebug  -bool true` traces hover and clicks to ~/.claude/claude-pulse/buddy-debug.log.
+  view now accepts that first click.
+  `defaults write com.warroom.claude-pulse buddyDebug -bool true` traces hover and clicks to
+  `~/.claude/claude-pulse/buddy-debug.log`.
 - **The desktop buddy blocks my clicks** — fixed in 0.12.1. A window only lets clicks reach
   the app underneath when it ignores mouse events outright; returning nil from a hit test is
   not enough. The panel is now click-through by default and becomes clickable only while the
@@ -520,48 +840,12 @@ both. A VS Code window keeps the build it loaded until it is reloaded (see
   the character when there is no room above, with its pointer turned up. It is still placed
   once, when it is said, so it stays put while the character moves on.
 
-## Settings
-
-- `claudePulse.allProjects` — show sessions from every project in every window (default off:
-  each window shows only its own workspace's sessions)
-- `claudePulse.alignment` / `claudePulse.priority` — where the indicator sits (default:
-  right side, far edge, so narrow windows don't hide it)
-- `claudePulse.doneDisplaySeconds` — how long the ✓ stays before fading to idle (default 15)
-- `claudePulse.showElapsed` — show the live timer while working (default on)
-- `claudePulse.waitingTimeoutSeconds` — a confirmed *permission* prompt reverts to working
-  this long after the last confirmation, since approving fires no event (default 45; repeat
-  notifications re-arm it; questions and agent prompts are never aged out; 0 disables)
-- `claudePulse.provisionalWaitSeconds` — show *unconfirmed* permission requests as "needs
-  input" after this many seconds (default 0 = never; see troubleshooting)
-- `claudePulse.showLimits` — show how much of your plan is left (default on)
-- `claudePulse.limitWarnWeekly` / `claudePulse.limitWarnSession` — the percentages that turn
-  the indicator amber (defaults 75 and 88)
-- `claudePulse.contextWarnTokens` — flag a conversation once it carries this much context
-  (default 300000)
-- `claudePulse.buddyUsageRemarks` — let the desktop character mention a limit out loud
-  (default on). Separate from `showLimits`, so you can keep the quiet badge without the
-  commentary.
-- `claudePulse.awayReminder` — say so about fifteen minutes before a large, idle conversation
-  stops being cheap to come back to (default on)
-- `claudePulse.awayWarnTokens` — how large it has to be for that (default 200000)
-- `claudePulse.keepUsageFresh` — have Claude Code fetch a new usage reading once the one it
-  holds has aged out (default on; costs no tokens)
-
-The macOS app reads the same things from its own domain, so `defaults write` tunes it
-without a restart:
-
-```bash
-defaults write com.warroom.claude-pulse limitWarnWeekly -int 60
-defaults write com.warroom.claude-pulse contextWarnTokens -int 250000
-defaults write com.warroom.claude-pulse limitAlerts -bool false   # no banners
-defaults write com.warroom.claude-pulse contextNudge -bool false  # no /compact nudge
-defaults write com.warroom.claude-pulse awayNudge -bool false     # no idle-chat reminder
-defaults write com.warroom.claude-pulse awayWarnTokens -int 150000
-defaults write com.warroom.claude-pulse usageAutoCheck -bool false  # never ask Claude Code for a reading
-```
-
 ## Lessons
 
 Everything that went wrong while building this, what caused it and what fixed it — every bug
 by version, and what Claude Code, VS Code and macOS turned out to do that nobody would guess —
 is in [LESSONS.md](LESSONS.md).
+
+## Licence
+
+[MIT](LICENSE).
