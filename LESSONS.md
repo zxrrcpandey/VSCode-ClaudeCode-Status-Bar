@@ -1,7 +1,7 @@
 # Lessons
 
 Everything that went wrong while building Claude Pulse, why it went wrong, and what the code
-does about it now — from the first status bar item to 0.18.1.
+does about it now — from the first status bar item to 0.18.2.
 
 The README's [Troubleshooting](README.md#troubleshooting) covers some of the same ground by
 symptom, for someone *using* Pulse. This file is for someone *changing* it. There are two ways
@@ -323,10 +323,11 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   started with and turns one way round the box: a quarter turn up the wall, a half on the
   ceiling, three quarters down the far wall. Easing towards −90° and then 180° had also spun
   it three quarters of a turn the long way at a corner.
-- **Ease everything that moves it, not only the turn.** A hanging character is raised so its
-  paws touch the ceiling, and that raise went in one frame when it pulled up or let go: a
-  jump of 46–54 px. It is eased now, like the turn. At the foot of a wall it stands up before
-  walking on, because turning round while still tilted flipped it sideways.
+- **Ease everything that moves it, not only the turn.** In 0.18.1 a hanging character was
+  raised so its paws touched the ceiling, and the raise went in one frame when it pulled up
+  or let go: a jump of 46–54 px. That was eased, and 0.18.2 removed the raise. At the foot of
+  a wall it stands up before walking on, because turning round while still tilted flipped it
+  sideways.
 - **Detail is paid for every frame unless it is painted once.** The 0.18.0 drawings, with
   gradients, fur and shadows, roughly tripled the GPU process's CPU while the whole drawing
   was redrawn with each limb's new angle. Every moving part is now its own small layer,
@@ -339,9 +340,20 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   Each was found in a contact sheet of fourteen poses — standing, walking, asleep, done,
   error, waiting, pointing, hanging, on a wall and the ceiling, waving, talking, held and
   facing left.
-- **Measure from the art.** Hanging from the ceiling used a fixed lift and overshot in a
-  short panel. Each character now says where its raised hands are (`reach`) and the lift
-  is worked out from that.
+- **Measure from the art, then look at what the numbers say.** Hanging from the ceiling used
+  a fixed lift and overshot in a short panel. In 0.18.0 each character said where its raised
+  hands were (`reach`), and the lift put them on the ceiling. Those numbers already showed
+  the problem: the hands sat 18–30 units (of a 120-unit box) below the top of the head, so
+  the ceiling cut the head off. Short limbs and a big head cannot hang by the hands. Since
+  0.18.2 they hang upside down, as they crawl there: the red panda and robot by their feet
+  with an arm held in (hanging down, it would cross the face), the cat, pup and tortoise by
+  all four paws. The red panda's tail, drawn resting on the ground, turns over its back to
+  hang down. The pup's floppy ear is turned against the body's turn, so it falls towards the
+  floor on a wall or the ceiling.
+- **Put the speech bubble where the drawing is, not where it would be standing.** The
+  bubble went a fixed height above the standing drawing and was clamped into the panel, so
+  at the ceiling it covered the character. It is now placed from the layers' actual
+  rectangles: above if it fits, otherwise below with its pointer turned up.
 - **The click area and the box are different things.** Only the drawn parts take clicks
   now, so the panel passes clicks through the empty corners. The whole box is still what
   is used to tell when the character has reached a screen edge.
@@ -553,6 +565,8 @@ found by review or test did not reach a release.
 | 0.18.1 | Characters walked backwards on the ceiling | Upside down is already mirrored; it was mirrored again by direction | Mirror kept from the start of the climb | reported |
 | 0.18.1 | Spun the long way at a ceiling corner; flipped sideways getting down | Turn targets of −90° then 180°; mirror changed mid-tilt | One way round the box; stands up before walking on | test |
 | 0.18.1 | Dropped half its height when leaving a hang | The hang's raise removed in one frame | Eased | test |
+| 0.18.2 | Hanging characters' heads cut off by the ceiling | Hung by hands that, held up, are lower than the head | Hang upside down by the feet or all four paws | test |
+| 0.18.2 | Speech bubble covered a character on the ceiling | Placed above a standing drawing, then clamped into the panel | Placed from where the drawing is; below it when there is no room above | test |
 
 ## Known gaps
 
@@ -560,9 +574,6 @@ found by review or test did not reach a release.
   Now*, have had the code beneath them tested but have not been exercised by a click.
 - The 0.18.0 drawings were checked in the macOS app and in rendered poses. In the VS Code
   panel they run from the same `buddy.html` but have not been looked at there by hand.
-- Hanging from the ceiling, the red panda, robot, cat and pup hold their raised hands or paws
-  lower than the top of their head, so the ceiling cuts the head off while they hang. Fixing
-  it needs a hanging pose drawn for each.
 - Nothing in `scripts/` loads `extension.js`. It is checked by hand under a stubbed `vscode`
   module before a release.
 - The usage check depends on how Claude Code 2.1.296 answers `/usage` without a terminal. A

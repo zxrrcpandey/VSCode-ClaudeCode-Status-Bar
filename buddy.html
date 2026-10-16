@@ -58,6 +58,11 @@
     border-right: 1px solid var(--vscode-editorWidget-border, #454545);
     border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
   }
+  #bubble.below::after {                      /* under the buddy: point up at it */
+    bottom: auto; top: -6px; border-right: 0; border-bottom: 0;
+    border-left: 1px solid var(--vscode-editorWidget-border, #454545);
+    border-top: 1px solid var(--vscode-editorWidget-border, #454545);
+  }
   #bubble b { color: var(--vscode-textLink-foreground, #4daafc); }
   #bubble .sub {
     display: block; margin-top: 4px;
@@ -659,14 +664,13 @@
   // ---- Character traits -------------------------------------------------
   // kind: biped | quad | flyer | slider. scale sizes the whole character.
   // speed multiplies walking/crawling. leap = chance to grab the ceiling.
-  // tail: [sways per second, degrees]. reach: art y of the hands held up,
-  // so a hang puts them on the ceiling. shadow: [x, half-width] on the ground.
+  // tail: [sways per second, degrees, turn upside down]. shadow: [x, half-width] on the ground.
   const CHARS = {
-    critter: { kind: 'biped',  scale: 1,    speed: 1,    leap: 0.55, climb: true,  jumps: true,  tail: [0.5, 5],  reach: -19, shadow: [0, 17] },
-    robot:   { kind: 'biped',  scale: 1,    speed: 0.9,  leap: 0.3,  climb: true,  jumps: true,  reach: -18, shadow: [0, 16] },
-    cat:     { kind: 'quad',   scale: 1,    speed: 1.1,  leap: 0.85, climb: true,  jumps: true,  tail: [0.35, 8], reach: -5, shadow: [-6, 34] },
-    pup:     { kind: 'quad',   scale: 1,    speed: 1.25, leap: 0.6,  climb: true,  jumps: true,  tail: [2, 12],   reach: -5, shadow: [-6, 34] },
-    turtle:  { kind: 'quad',   scale: 0.8,  speed: 0.3,  leap: 0.05, climb: false, jumps: true,  reach: -5, shadow: [-3, 36] },
+    critter: { kind: 'biped',  scale: 1,    speed: 1,    leap: 0.55, climb: true,  jumps: true,  tail: [0.5, 5, 90], shadow: [0, 17] },
+    robot:   { kind: 'biped',  scale: 1,    speed: 0.9,  leap: 0.3,  climb: true,  jumps: true,  shadow: [0, 16] },
+    cat:     { kind: 'quad',   scale: 1,    speed: 1.1,  leap: 0.85, climb: true,  jumps: true,  tail: [0.35, 8], shadow: [-6, 34] },
+    pup:     { kind: 'quad',   scale: 1,    speed: 1.25, leap: 0.6,  climb: true,  jumps: true,  tail: [2, 12],   shadow: [-6, 34] },
+    turtle:  { kind: 'quad',   scale: 0.8,  speed: 0.3,  leap: 0.05, climb: false, jumps: true,  shadow: [-3, 36] },
     snail:   { kind: 'slider', scale: 0.55, speed: 0.2,  leap: 0,    climb: true,  jumps: false, climbSpeed: 0.35, blink: false, shadow: [2, 46] },
     bee:     { kind: 'flyer',  scale: 0.7,  ease: 0.06,  retarget: 0.02,  restP: 0.2,  flap: 9,   flapAmp: 32, bobAmp: 4, tricks: true, shadow: [3, 18] },
     dragon:  { kind: 'flyer',  scale: 1.5,  ease: 0.012, retarget: 0.002, restP: 0.4,  flap: 0.9, flapAmp: 18, bobAmp: 5, tail: [0.3, 5], shadow: [-2, 26] },
@@ -809,9 +813,20 @@
     const left = Math.max(6, Math.min(x - 20, stage.clientWidth - bubble.offsetWidth - 8));
     bubble.style.left = left + 'px';
     // Follow the buddy vertically (it may be on a wall, the ceiling, or in
-    // the air) and clamp into view — short panels would otherwise clip it.
-    const base = Math.min(stage.clientHeight - bubble.offsetHeight - 4, Math.max(ART + 20, y + ART + 14));
-    bubble.style.bottom = Math.max(4, base) + 'px';
+    // the air): just above the drawing as it is now, or below it when there
+    // is no room above — on the ceiling, clamping it down covered the buddy.
+    const sr = stage.getBoundingClientRect(), hgt = bubble.offsetHeight;
+    let top = Infinity, bot = -Infinity;
+    for (const s of rig.children) {
+      const r = s.getBoundingClientRect();
+      if (r.width && r.height) { top = Math.min(top, r.top); bot = Math.max(bot, r.bottom); }
+    }
+    if (top === Infinity) { const r = char.getBoundingClientRect(); top = r.top; bot = r.bottom; }
+    else { top += CH * 8 / 120; bot -= CH * 8 / 120; }    // the layers' crop padding
+    const above = sr.bottom - top + 3, below = sr.bottom - bot - 9 - hgt;
+    const under = above + hgt + 4 > stage.clientHeight && below >= 4;
+    bubble.classList.toggle('below', under);
+    bubble.style.bottom = (under ? below : Math.max(4, Math.min(stage.clientHeight - hgt - 4, above))) + 'px';
     bubble.classList.add('show');
     clearTimeout(bubbleTimer);
     bubbleTimer = setTimeout(() => bubble.classList.remove('show'), ms || 4500);
@@ -885,17 +900,24 @@
     setEyes(state === 'error' ? 'dazed' : 'open');
   }
 
-  let bobT = 0, dir = 1, moving = false, squish = 1, lift = 0;
+  let bobT = 0, dir = 1, moving = false, squish = 1, swingAmt = 0;
   let y = 0, vy = 0;
   let flip = { active: false, start: 0, dur: 0, turns: 1 };
 
   function applyTransform(ts) {
     const grounded = y <= 0.5;
-    const bob = (grounded && !AIR) ? Math.sin(bobT * 2.2) * -2.5 : Math.sin(bobT * 1.8) * -(C.bobAmp || 3);
+    // Feet on the ceiling stay on it: no bob while hanging or crawling there.
+    const onCeiling = activity === 'hang' || (climb && climb.phase === 'ceil');
+    const bob = onCeiling ? 0
+      : (grounded && !AIR) ? Math.sin(bobT * 2.2) * -2.5 : Math.sin(bobT * 1.8) * -(C.bobAmp || 3);
     let rot = 0;
     const onSurface = Math.abs(surfCur) > 1 || surfTarget !== 0;
-    if (activity === 'hang' || held) {
-      rot = Math.sin(bobT * 2) * 7;                   // pendulum from the hands
+    // Hanging upside down, it swings from its feet; the swing fades in as it
+    // turns over and out as it crawls off or lets go.
+    swingAmt += ((activity === 'hang' ? 1 : 0) - swingAmt) * 0.15;
+    const sw = swingAmt > 0.01 ? Math.sin(bobT * 2) * 8 * swingAmt : 0;
+    if (held) {
+      rot = Math.sin(bobT * 2) * 7;                   // pendulum from where it is held
     } else if (onSurface) {
       // Climbing a wall or crawling the ceiling — orientation follows the surface.
       rot = surfCur + (activity === 'climb' && moving ? Math.sin(bobT * 9) * 4 : 0);
@@ -911,18 +933,18 @@
     }
     if (AIR && airMode === 'waggle') rot += Math.sin(bobT * 14) * 14;   // dance wobble
     squish += (1 - squish) * 0.18;
-    // Hanging: the raised hands sit well below the top of the box. Lift it so
-    // the hands are what touches the ceiling, and swing from them.
-    const hang = activity === 'hang' && C.reach !== undefined;
-    const handsPct = hang ? (C.reach + 80) / 1.2 : 0;    // viewBox y -80..40 → 0..100%
-    const liftTo = hang
-      ? Math.max(0, stage.clientHeight - 1 - FLOOR - y - CH * (1 - handsPct / 100))
-      : 0;
-    // Eased like the turn onto a surface: pulling up onto the ceiling or letting
-    // go dropped it half its height in one frame when the lift went at once.
-    lift = held ? 0 : lift + (liftTo - lift) * 0.15;
+    // The turn is about the middle of the box; swinging from the feet (the
+    // bottom of the box, half its height away) is that turn plus a shift.
+    let sx = 0, sy = 0;
+    if (sw && !held) {
+      rot += sw;
+      const h = CH / 2, t = surfCur * Math.PI / 180, a = sw * Math.PI / 180;
+      const fx = -h * Math.sin(t), fy = h * Math.cos(t);    // feet, from the middle
+      sx = fx - (fx * Math.cos(a) - fy * Math.sin(a));
+      sy = fy - (fx * Math.sin(a) + fy * Math.cos(a));
+    }
     // The art fills the lower two thirds of the box; 67% is its middle.
-    char.style.transformOrigin = (activity === 'hang' || held) ? '50% ' + handsPct.toFixed(1) + '%'
+    char.style.transformOrigin = held ? '50% 0%'
       : onSurface ? '50% 50%'
       : (activity === 'flip' || flip.active || !grounded) ? '50% 67%' : '50% 100%';
     // A climb keeps the mirror it started with: rotate(180) already turns the
@@ -930,7 +952,7 @@
     // walk it backwards there.
     const face = climb ? climb.side : dir;
     char.style.transform =
-      'translateY(' + (bob - y - lift).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
+      'translate(' + sx.toFixed(1) + 'px,' + (bob - y + sy).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
       ' scaleX(' + (face * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
     // Contact shadow: on the floor only, fading as it leaves the ground.
     const onFloor = !held && !onSurface && activity !== 'hang' && (!AIR || y < 3);
@@ -961,7 +983,7 @@
     held = true;
     activity = 'held';
     climb = null; leap = null; vy = 0; hopsLeft = 0; airPlan = null; airMode = 'fly';
-    flip.active = false; dropRoll = false; surfTarget = 0; surfCur = 0;
+    flip.active = false; dropRoll = false; surfTarget = 0; surfCur = 0; swingAmt = 0;
     pauseUntil = 0; pointUntil = 0; parkUntil = 0; squish = 0.85;
     char.style.cursor = 'grabbing';
     vscode.postMessage({ type: 'grab' });
@@ -977,7 +999,7 @@
     x = Math.max(4, Math.min(x0, wallR(w)));
     y = Math.max(0, Math.min(y0, topY()));
     vy = 0; climb = null; leap = null; hopsLeft = 0; airPlan = null;
-    flip.active = false; dropRoll = false; surfTarget = 0; surfCur = 0;
+    flip.active = false; dropRoll = false; surfTarget = 0; surfCur = 0; swingAmt = 0;
     targetX = x; targetY = y;
     parkUntil = ts + STAY_MS;
     if (AIR) { airMode = 'hover'; startRest(ts, STAY_MS); }
@@ -1112,8 +1134,10 @@
     if (activity === 'leap' && !grounded) {
       al = 170; ar = -170; ll = 8; lr = -8; gesture = true;   // reaching for the ceiling
     } else if (activity === 'hang') {
-      const k = Math.sin(bobT * 2.5) * 12;
-      al = 178; ar = -178; ll = k; lr = -k; gesture = true;   // holding on, legs dangling
+      // Upside down, feet on the ceiling. An arm hanging down would cross the
+      // face, so it is held in to the chest; the robot's claw ends up near the
+      // ceiling, as if holding on.
+      ar = -25 + Math.sin(bobT * 2.5) * 6; al = 25; ll = 0; lr = 0; gesture = true;
     } else if (held) {
       const k = Math.sin(bobT * 9) * 20;
       al = 150; ar = -150 + k * 0.4; ll = k; lr = -k; gesture = true;   // carried: arms up, legs kicking
@@ -1142,18 +1166,19 @@
     if (C.kind === 'biped') {
       R('legN', ll); R('legF', lr);
       // Carries walk swing, air pose, and gestures. A raised near arm would
-      // cross the face, so gestures lift it forward, in front of the muzzle;
-      // only a hang reaches straight up.
-      R('armN', activity === 'hang' || ar >= -95 ? ar : -95 + (ar + 95) * 0.45);
+      // cross the face, so gestures lift it forward, in front of the muzzle —
+      // hanging upside down too, where it dangles past the muzzle.
+      R('armN', ar >= -95 ? ar : -95 + (ar + 95) * 0.45);
     } else if (C.kind === 'quad') {
       // Diagonal gait: front-near with back-far, front-far with back-near.
       // The front-near paw doubles as the gesture arm: lifted forward the way
-      // a cat paws at something, straight up only to hang on.
-      const fn = !gesture ? (grounded ? walkA : -20)
-        : activity === 'hang' ? Math.max(-150, ar)
+      // a cat paws at something. Hanging, all four paws hold the ceiling.
+      const cling = activity === 'hang';
+      const fn = cling ? 0 : !gesture ? (grounded ? walkA : -20)
         : Math.max(-62, Math.min(-38, -48 + (ar + 150) * 0.5));   // keeps the wave's wiggle
-      const ff = held ? -ll : grounded ? -walkA : -20;
-      const bn = held ? -ll : grounded ? -walkA : 15, bf = held ? ll : grounded ? walkA : 15;
+      const ff = cling ? 0 : held ? -ll : grounded ? -walkA : -20;
+      const bn = cling ? 0 : held ? -ll : grounded ? -walkA : 15;
+      const bf = cling ? 0 : held ? ll : grounded ? walkA : 15;
       R('qfn', fn); R('qff', ff);
       R('qbn', bn); R('qbf', bf);
     } else if (C.kind === 'flyer') {
@@ -1171,11 +1196,16 @@
       R('dangle', dg); R('dangleF', dg * 0.8);
     }
     if (C.tail) {
-      // A slow sway, quicker and wider when excited — the pup wags.
+      // A slow sway, quicker and wider when excited — the pup wags. A tail
+      // drawn resting on the ground turns over the back as the body turns
+      // upside down, so it hangs instead of lying along the ceiling.
       const happy = data.state === 'done' || data.state === 'waiting' || ts < celebrateUntil || ts < pointUntil;
-      R('tail', Math.sin(bobT * 6.283 * C.tail[0] * (happy ? 2.5 : 1)) * C.tail[1] * (happy ? 1.5 : 1));
+      const over = (C.tail[2] || 0) * (1 - Math.cos(surfCur * Math.PI / 180)) / 2;
+      R('tail', over + Math.sin(bobT * 6.283 * C.tail[0] * (happy ? 2.5 : 1)) * C.tail[1] * (happy ? 1.5 : 1));
     }
-    R('ear', walkA * 0.25 + Math.sin(bobT * 2) * 2);   // floppy ear
+    // The floppy ear falls towards the floor whichever way the body is turned.
+    const face = climb ? climb.side : dir;
+    R('ear', walkA * 0.25 + Math.sin(bobT * 2) * 2 - face * surfCur);
   }
 
   function loop(ts) {
@@ -1285,21 +1315,24 @@
         surfTarget = -climb.side * { approach: 0, up: 90, ceil: 180, down: 270 }[climb.phase];
       }
     } else if (activity === 'hang') {
-      // Hanging from the ceiling by the hands, swinging. Then: pull up and
-      // crawl away, or let go.
+      // Hanging upside down from the ceiling, swinging. Its hands or paws held
+      // up reach less high than its head, so hanging by them put the head
+      // through the ceiling. Grabbing, it kicks its feet up over its head, so
+      // it turns over the way its back was facing. Then: crawl away, or let go.
       moving = false;
       y = ceilH();
+      surfTarget = -dir * 180;
       if (!resting && ts >= hangUntil) {
         if (Math.random() < 0.55 && canClimb) {
-          // It swings up onto the ceiling head over heels, so it ends up
-          // crawling the way its back was turned.
+          // Already upside down at the climb's angle and mirror: it just walks.
           const side = dir;
           activity = 'climb';
           climb = { phase: 'ceil', side, exitMode: Math.random() < 0.5 ? 'drop' : 'across' };
           targetX = climb.exitMode === 'across' ? (side < 0 ? wallR(w) : 4)
             : x - side * (0.3 + 0.7 * Math.random()) * (side < 0 ? wallR(w) - x : x - 4);
         } else {
-          activity = 'drop'; dropRoll = false; vy = 0;
+          // Let go, turning on over to land on its feet.
+          activity = 'drop'; dropRoll = true; vy = 0; surfTarget = -dir * 360;
         }
       }
     } else {
@@ -1491,7 +1524,7 @@
     y = AIR ? Math.max(0, Math.min(y0, maxApex())) : 0;
     vy = 0; pauseUntil = 0; pointUntil = 0; parkUntil = 0;
     held = false; grab = null; char.style.cursor = '';
-    climb = null; leap = null; surfTarget = 0; surfCur = 0; lift = 0;
+    climb = null; leap = null; surfTarget = 0; surfCur = 0; swingAmt = 0;
     flip.active = false; dropRoll = false; hopsLeft = 0;
     airPlan = null; airMode = 'fly';
     activity = 'walk';
