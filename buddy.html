@@ -885,7 +885,7 @@
     setEyes(state === 'error' ? 'dazed' : 'open');
   }
 
-  let bobT = 0, dir = 1, moving = false, squish = 1;
+  let bobT = 0, dir = 1, moving = false, squish = 1, lift = 0;
   let y = 0, vy = 0;
   let flip = { active: false, start: 0, dur: 0, turns: 1 };
 
@@ -915,16 +915,23 @@
     // the hands are what touches the ceiling, and swing from them.
     const hang = activity === 'hang' && C.reach !== undefined;
     const handsPct = hang ? (C.reach + 80) / 1.2 : 0;    // viewBox y -80..40 → 0..100%
-    const lift = hang
+    const liftTo = hang
       ? Math.max(0, stage.clientHeight - 1 - FLOOR - y - CH * (1 - handsPct / 100))
       : 0;
+    // Eased like the turn onto a surface: pulling up onto the ceiling or letting
+    // go dropped it half its height in one frame when the lift went at once.
+    lift = held ? 0 : lift + (liftTo - lift) * 0.15;
     // The art fills the lower two thirds of the box; 67% is its middle.
     char.style.transformOrigin = (activity === 'hang' || held) ? '50% ' + handsPct.toFixed(1) + '%'
       : onSurface ? '50% 50%'
       : (activity === 'flip' || flip.active || !grounded) ? '50% 67%' : '50% 100%';
+    // A climb keeps the mirror it started with: rotate(180) already turns the
+    // drawing round, so mirroring by the way it crawls along the ceiling would
+    // walk it backwards there.
+    const face = climb ? climb.side : dir;
     char.style.transform =
       'translateY(' + (bob - y - lift).toFixed(1) + 'px) rotate(' + rot.toFixed(1) + 'deg)' +
-      ' scaleX(' + (dir * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
+      ' scaleX(' + (face * squish).toFixed(3) + ') scaleY(' + squish.toFixed(3) + ')';
     // Contact shadow: on the floor only, fading as it leaves the ground.
     const onFloor = !held && !onSurface && activity !== 'hang' && (!AIR || y < 3);
     const op = onFloor ? Math.max(0, 1 - y / 30).toFixed(2) : '0.00';
@@ -1254,19 +1261,28 @@
           if (Math.abs(targetX - x) <= step) {
             x = targetX;
             if (climb.exitMode === 'across') climb.phase = 'down';
-            else { climb = null; activity = 'drop'; dropRoll = true; vy = 0; surfTarget = 360; } // let go!
+            else {                                     // let go, rolling on the way it was turning
+              dir = climb.side; surfTarget = -climb.side * 360;
+              climb = null; activity = 'drop'; dropRoll = true; vy = 0;
+            }
           } else { dir = targetX > x ? 1 : -1; x += dir * step; }
         } else if (climb.phase === 'down') {
           x = targetX = climb.side < 0 ? wallR(w) : 4; // descending the opposite wall
           y -= cs;
-          if (y <= 0) { y = 0; climb = null; surfTarget = 0; scheduleNext(ts); }
+          if (y <= 0) {
+            // 270° round is a quarter turn short of upright: finish it the same
+            // way, facing away from the wall it came down, and stand up before
+            // walking on — turning round mid-tilt snaps the mirror sideways.
+            y = 0; dir = climb.side; surfCur += climb.side * 360;
+            climb = null; surfTarget = 0; startRest(ts, 500);
+          }
         }
       }
       if (climb) {
-        surfTarget = climb.phase === 'ceil' ? 180
-          : climb.phase === 'up' ? (climb.side < 0 ? 90 : -90)
-          : climb.phase === 'down' ? (climb.side < 0 ? -90 : 90)
-          : 0;
+        // One way round the box, head first: a quarter turn up the wall, a
+        // half on the ceiling, three quarters down the far wall. Turning back
+        // from the ceiling to the wall it came from would spin it the long way.
+        surfTarget = -climb.side * { approach: 0, up: 90, ceil: 180, down: 270 }[climb.phase];
       }
     } else if (activity === 'hang') {
       // Hanging from the ceiling by the hands, swinging. Then: pull up and
@@ -1275,10 +1291,13 @@
       y = ceilH();
       if (!resting && ts >= hangUntil) {
         if (Math.random() < 0.55 && canClimb) {
-          const side = Math.random() < 0.5 ? -1 : 1;
+          // It swings up onto the ceiling head over heels, so it ends up
+          // crawling the way its back was turned.
+          const side = dir;
           activity = 'climb';
           climb = { phase: 'ceil', side, exitMode: Math.random() < 0.5 ? 'drop' : 'across' };
-          targetX = climb.exitMode === 'across' ? (side < 0 ? wallR(w) : 4) : 30 + Math.random() * Math.max(1, w - CH - 62);
+          targetX = climb.exitMode === 'across' ? (side < 0 ? wallR(w) : 4)
+            : x - side * (0.3 + 0.7 * Math.random()) * (side < 0 ? wallR(w) - x : x - 4);
         } else {
           activity = 'drop'; dropRoll = false; vy = 0;
         }
@@ -1336,7 +1355,7 @@
             } else if (activity === 'flip' || activity === 'drop') {
               // Normalize the leftover roll so it eases the last few degrees to 0
               // in the same spin direction — short falls would otherwise pop.
-              if (activity === 'drop' && dropRoll) surfCur -= 360;
+              if (activity === 'drop' && dropRoll) surfCur -= Math.sign(surfTarget) * 360;
               surfTarget = 0; dropRoll = false;
               scheduleNext(ts);
             }
@@ -1457,6 +1476,8 @@
       return;
     }
     if (activity === 'climb' || activity === 'leap' || activity === 'hang') {
+      if (climb) dir = climb.side;            // keep the mirror it climbed with
+      surfCur -= 360 * Math.round(surfCur / 360);   // back upright the short way
       climb = null; leap = null; surfTarget = 0; vy = 0;
       activity = y > 0.5 ? 'drop' : 'dash';
     } else if (y <= 0.5) {
@@ -1470,7 +1491,7 @@
     y = AIR ? Math.max(0, Math.min(y0, maxApex())) : 0;
     vy = 0; pauseUntil = 0; pointUntil = 0; parkUntil = 0;
     held = false; grab = null; char.style.cursor = '';
-    climb = null; leap = null; surfTarget = 0; surfCur = 0;
+    climb = null; leap = null; surfTarget = 0; surfCur = 0; lift = 0;
     flip.active = false; dropRoll = false; hopsLeft = 0;
     airPlan = null; airMode = 'fly';
     activity = 'walk';

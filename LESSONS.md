@@ -1,7 +1,7 @@
 # Lessons
 
 Everything that went wrong while building Claude Pulse, why it went wrong, and what the code
-does about it now — from the first status bar item to 0.18.0.
+does about it now — from the first status bar item to 0.18.1.
 
 The README's [Troubleshooting](README.md#troubleshooting) covers some of the same ground by
 symptom, for someone *using* Pulse. This file is for someone *changing* it. There are two ways
@@ -317,6 +317,16 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   only counted after an actual launch, and the urgent "needs input" bounce cannot hijack a
   crouch.
 - **Art has a front.** The snail was drawn facing backwards and travelled tail first.
+- **Upside down is already mirrored.** `rotate(180deg)` turns a drawing round left to right
+  as well as upside down. Mirroring it again by the way it was going, which is right on the
+  floor, walked every climber backwards along the ceiling. A climb now keeps the mirror it
+  started with and turns one way round the box: a quarter turn up the wall, a half on the
+  ceiling, three quarters down the far wall. Easing towards −90° and then 180° had also spun
+  it three quarters of a turn the long way at a corner.
+- **Ease everything that moves it, not only the turn.** A hanging character is raised so its
+  paws touch the ceiling, and that raise went in one frame when it pulled up or let go: a
+  jump of 46–54 px. It is eased now, like the turn. At the foot of a wall it stands up before
+  walking on, because turning round while still tilted flipped it sideways.
 - **Detail is paid for every frame unless it is painted once.** The 0.18.0 drawings, with
   gradients, fur and shadows, roughly tripled the GPU process's CPU while the whole drawing
   was redrawn with each limb's new angle. Every moving part is now its own small layer,
@@ -438,6 +448,11 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   click area as the character's position and reported a parked red panda as moved 13 pt.
   It had only turned to look round, and its click area is not symmetrical. The test reads
   the position from the page.
+- **A still frame cannot show which way something is going.** The fourteen-pose sheet had
+  the ceiling in it and was looked at, and upside down a character facing backwards looks
+  just as right. What found it was a test that steps the page's own loop through whole
+  climbs and checks, every frame, where the head points on screen against where the
+  character actually moved. On 0.18.0 that failed every climb.
 - **A gap between two manual steps looks like staleness.** A reading that seemed 39 minutes
   old "right after refreshing" was the time between the two commands. Check the file's own
   timestamp.
@@ -535,6 +550,9 @@ found by review or test did not reach a release.
 | 0.18.0 | Bee's antenna stems missing; glows cut square | Filter region measured from a zero-width shape | Fixed region in user space | test |
 | 0.18.0 | Click area the size of the whole box | Whitespace nodes became layers | Only elements become layers | test |
 | 0.18.0 | Raised arm hid the face; dragon's spade hidden | Parts checked in one pose only | Arm angles eased above the shoulder; tail redrawn | test |
+| 0.18.1 | Characters walked backwards on the ceiling | Upside down is already mirrored; it was mirrored again by direction | Mirror kept from the start of the climb | reported |
+| 0.18.1 | Spun the long way at a ceiling corner; flipped sideways getting down | Turn targets of −90° then 180°; mirror changed mid-tilt | One way round the box; stands up before walking on | test |
+| 0.18.1 | Dropped half its height when leaving a hang | The hang's raise removed in one frame | Eased | test |
 
 ## Known gaps
 
@@ -542,6 +560,9 @@ found by review or test did not reach a release.
   Now*, have had the code beneath them tested but have not been exercised by a click.
 - The 0.18.0 drawings were checked in the macOS app and in rendered poses. In the VS Code
   panel they run from the same `buddy.html` but have not been looked at there by hand.
+- Hanging from the ceiling, the red panda, robot, cat and pup hold their raised hands or paws
+  lower than the top of their head, so the ceiling cuts the head off while they hang. Fixing
+  it needs a hanging pose drawn for each.
 - Nothing in `scripts/` loads `extension.js`. It is checked by hand under a stubbed `vscode`
   module before a release.
 - The usage check depends on how Claude Code 2.1.296 answers `/usage` without a terminal. A
