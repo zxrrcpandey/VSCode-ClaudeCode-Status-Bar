@@ -67,9 +67,9 @@ Build it yourself with `cd macos && ./make-dmg.sh` (the disk image), or
 
 What VS Code could not do: enable **Desktop Buddy** in the menu and the character leaves the
 panel and roams your real desktop, above every other app. The screen edges are its world —
-it walks along the bottom, climbs the sides, hangs from the top, and reacts to Claude exactly
-as it does in the editor (pacing while working, flailing when you are needed, speech bubbles
-when you click it).
+it walks along the bottom, climbs the sides, crosses the top upside down or hangs from it,
+and reacts to Claude exactly as it does in the editor (pacing while working, flailing when
+you are needed, speech bubbles when you click it).
 
 - **One panel per screen**, and every minute or two the buddy **crosses** to the other one:
   it heads for the edge facing it and carries on from the opposite edge of the next screen
@@ -294,11 +294,17 @@ it talks back** — real status, task progress, and token counts in speech bubbl
 
 Nine built-in characters with different bodies and personalities, each drawn with shading,
 fur or scales, and eyes that blink, close for a nap and squeeze shut on an error:
-🐾 Red panda (the default, `critter` in settings) and 🤖 Robot (two legs — climb walls, leap
-for the ceiling), 🐱 Cat, 🐶 Pup and 🐢 Tortoise (four legs; the tortoise is small and very
-slow), 🐌 Snail (tiny, slowest, slowly crawls walls and ceiling), 🐝 Bee (a honeybee, zips
-around the whole panel), 🐉 Dragon (big, slow wingbeats, glides everywhere), 👻 Ghost
-(floats). Each has its own ceiling-leap success rate.
+🐾 Red panda (the default, `critter` in settings) and 🤖 Robot (two legs), 🐱 Cat, 🐶 Pup and
+🐢 Tortoise (four legs; the tortoise is small and very slow), 🐌 Snail (tiny and slowest),
+🐝 Bee (a honeybee, zips around the whole panel), 🐉 Dragon (big, slow wingbeats, glides
+everywhere), 👻 Ghost (floats).
+
+The red panda, robot, cat, pup and snail climb the walls and cross the ceiling upside down,
+head first. The five with legs also leap for the ceiling, each with its own success rate.
+One that catches it turns over and hangs upside down for two to five seconds, swinging a
+little: the red panda and robot by their feet, the cat, pup and tortoise by all four paws.
+Then it crawls off along the ceiling, or lets go, rolls over and lands on its feet. The
+tortoise cannot climb, so it always lets go.
 
 **Use your own character:** run *Claude Pulse: Choose Buddy Character* and pick any image —
 PNG, JPG, WebP, SVG, or an animated GIF (`claudePulse.buddyImage` holds the path). The
@@ -487,6 +493,32 @@ is in [LESSONS.md](LESSONS.md).
 - **The desktop buddy vanished** — fixed in 0.12.1: the web content process can be killed
   under memory pressure, leaving the window up but empty. The buddy now reloads itself when
   that happens, and a watchdog revives it if the page stops reporting its position for 5 s.
+
+### How the buddy moves
+
+The buddy in the VS Code panel and the one on the desktop run the same page, so these apply to
+both. A VS Code window keeps the build it loaded until it is reloaded (see
+[The indicator](#the-indicator)).
+
+- **It walks backwards along the ceiling** — fixed in 0.18.1. Turning a drawing upside down
+  also turns it round left to right, and the code then mirrored it again by the way it was
+  walking, as it does on the floor. Every climber crossed the ceiling backwards. A climb now
+  keeps the way the character faced when it started.
+- **It spins round the long way at a top corner, or flips sideways at the foot of a wall** —
+  fixed in 0.18.1. The turn eased towards a quarter turn one way up the wall and then a half
+  turn the other way on the ceiling, so it spun three quarters of a turn at the corner. At the
+  bottom it turned round while still tilted up to 65°. It now turns one way round the whole
+  box, and stands up before it walks on.
+- **It drops 46–54 px in one frame as it leaves a hang** — fixed in 0.18.1. Hanging raised it
+  until its paws touched the ceiling, and the raise was taken away in one frame when it pulled
+  up or let go. 0.18.1 eased it; 0.18.2 hangs a different way and has no raise.
+- **The top of its head disappears into the ceiling while it hangs** — fixed in 0.18.2. It
+  hung by its raised hands or paws, which on these drawings are lower than the top of the
+  head, so the ceiling cut 6.5–24.3 px off the drawing. It now hangs upside down by its feet,
+  or by all four paws.
+- **Its speech bubble covers it on the ceiling** — fixed in 0.18.2. The bubble now goes below
+  the character when there is no room above, with its pointer turned up. It is still placed
+  once, when it is said, so it stays put while the character moves on.
 
 ## Settings
 

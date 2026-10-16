@@ -433,7 +433,14 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
 - **A dying app writes its preferences back.** Clearing a `defaults` key and then quitting
   the app restores the key. Quit, then clear.
 - **A failing new test may be the test.** One asserted a sample count that is only filled in
-  once three samples exist; another used less spend than the calibration's own minimum.
+  once three samples exist; another used less spend than the calibration's own minimum. The
+  climb test's first run on the fixed 0.18.1 page reported faults, and none of them was real:
+  of about 44,700 frames, none faced backwards. It read the transform left over from before
+  it started, which looked like a flip in the first frame. The hook it used to steer the
+  character off the ceiling cleared the climb in the middle of a frame. It added up the turn
+  angle, which is wound back by 360° when a climb ends, so one trip "turned" 692°. It now
+  steps the loop before reading, steers at the end of a frame and wraps each frame's turn
+  into ±180°, and 216 climbs, 115,823 frames, pass.
 - **Look for the window, not at the screen.** Asking the window server which windows exist
   and how large they are (`CGWindowListCopyWindowInfo`) found the 0×0 banner in a minute; a
   screenshot only showed nothing.
@@ -464,7 +471,13 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   the ceiling in it and was looked at, and upside down a character facing backwards looks
   just as right. What found it was a test that steps the page's own loop through whole
   climbs and checks, every frame, where the head points on screen against where the
-  character actually moved. On 0.18.0 that failed every climb.
+  character actually moved. On 0.18.0 that failed every climb. The same test found what no
+  still could: leaving a hang moved the character 46–54 px in one frame, and at the foot of a
+  wall it turned round while still tilted up to 65°.
+- **Make a new test fail on the release that has the bug.** The climb test was run on 0.18.0
+  before its passes on 0.18.1 were believed. The hang measurement put 0.18.1's drawings
+  6.5–24.3 px past the top of the panel before it put 0.18.2's at 0.4 px at most. A test
+  that passes on both says nothing about the fix.
 - **A gap between two manual steps looks like staleness.** A reading that seemed 39 minutes
   old "right after refreshing" was the time between the two commands. Check the file's own
   timestamp.
@@ -494,6 +507,8 @@ Each of these stopped a build or a test at least once.
 | `open` straight after quitting the same app | −600 while the old copy exits | wait for the process to go |
 | `claude` started from a Claude Code terminal | refuses to nest | `env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT claude …` |
 | `claude -p /usage` with the `claude` on the PATH | 2.1.69: *Unknown skill: usage* | the copy inside the VS Code extension |
+| `cmd $list` in zsh, with `list="a b c"` | zsh does not split a variable into words, so `cmd` gets one argument | `cmd ${=list}`, or an array |
+| `evaluateJavaScript` on a script whose last value is a function | `WKErrorDomain` code 5, *returned a result of an unsupported type* | end the script on a plain value, such as `0;` |
 
 ## Bug log
 
@@ -564,16 +579,29 @@ found by review or test did not reach a release.
 | 0.18.0 | Raised arm hid the face; dragon's spade hidden | Parts checked in one pose only | Arm angles eased above the shoulder; tail redrawn | test |
 | 0.18.1 | Characters walked backwards on the ceiling | Upside down is already mirrored; it was mirrored again by direction | Mirror kept from the start of the climb | reported |
 | 0.18.1 | Spun the long way at a ceiling corner; flipped sideways getting down | Turn targets of −90° then 180°; mirror changed mid-tilt | One way round the box; stands up before walking on | test |
-| 0.18.1 | Dropped half its height when leaving a hang | The hang's raise removed in one frame | Eased | test |
+| 0.18.1 | Dropped 46–54 px in one frame when leaving a hang | The hang's raise removed in one frame | Eased | test |
 | 0.18.2 | Hanging characters' heads cut off by the ceiling | Hung by hands that, held up, are lower than the head | Hang upside down by the feet or all four paws | test |
 | 0.18.2 | Speech bubble covered a character on the ceiling | Placed above a standing drawing, then clamped into the panel | Placed from where the drawing is; below it when there is no room above | test |
+| 0.18.2 | Red panda's tail lay along the ceiling; pup's ear pointed up at it | Drawn for standing; nothing turned them with the body | Tail turns over the back; ear turned against the body's turn | test |
+| 0.18.2 | Bobbed up to 3 px on and off the ceiling | The bob used in the air also ran on the ceiling | No bob on the ceiling | review |
 
 ## Known gaps
 
 - The two menu rows added in 0.16.0, *Keep the usage figures up to date* and *Check Usage
   Now*, have had the code beneath them tested but have not been exercised by a click.
-- The 0.18.0 drawings were checked in the macOS app and in rendered poses. In the VS Code
-  panel they run from the same `buddy.html` but have not been looked at there by hand.
+- The 0.18.0 drawings were checked in the macOS app and in rendered poses. The climbing and
+  hanging from 0.18.1 and 0.18.2 were checked in WebKit, as the app runs the page, by tests
+  that step its loop, in filmstrips and in rendered poses. In the VS Code panel all of it
+  runs from the same `buddy.html` but has not been looked at there by hand.
+- The climb test, the hang measurement and the filmstrip tool were written for 0.18.1 and
+  0.18.2 and are not in the repo, so the next change to how the character moves has nothing
+  to re-run.
+- The drag test needs a real mouse with the installed app quit. It was last run on 0.18.0.
+- The speech bubble is placed once, when it is said, and stays there while the character
+  moves on. Said at the moment a character grabs the ceiling, it is placed from the pose
+  before the character turns over, so it sits further below than it needs to. In a panel
+  with room neither above nor below the character, such as a short one with the dragon in
+  it, it overlaps the drawing.
 - Nothing in `scripts/` loads `extension.js`. It is checked by hand under a stubbed `vscode`
   module before a release.
 - The usage check depends on how Claude Code 2.1.296 answers `/usage` without a terminal. A
