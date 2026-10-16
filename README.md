@@ -16,6 +16,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/zxrrcpandey/VSCode-ClaudeCode-Status-Bar" alt="MIT licence"></a>
 </p>
 
+<p align="center">
+  Made by <a href="https://github.com/zxrrcpandey">Rahul Pandey</a>
+</p>
+
 Claude Pulse watches every Claude Code session on your machine and shows its state where you
 already look: the **VS Code status bar** and the **macOS menu bar**. It also counts your tokens,
 reads how much of your 5-hour and weekly limits is left, warns you before you run out, and
@@ -42,7 +46,7 @@ It runs on Claude Code's own hooks and files. No API calls, no tokens, no accoun
 - [Building and testing](#building-and-testing)
 - [Settings and commands](#settings-and-commands)
 - [Privacy](#privacy) · [Uninstall](#uninstall) · [Troubleshooting](#troubleshooting)
-- [Lessons](#lessons) · [Licence](#licence)
+- [Lessons](#lessons) · [Author and licence](#author-and-licence)
 
 ## What it does
 
@@ -846,6 +850,6 @@ Everything that went wrong while building this, what caused it and what fixed it
 by version, and what Claude Code, VS Code and macOS turned out to do that nobody would guess —
 is in [LESSONS.md](LESSONS.md).
 
-## Licence
+## Author and licence
 
-[MIT](LICENSE).
+Made by [Rahul Pandey](https://github.com/zxrrcpandey). Released under the [MIT licence](LICENSE).
