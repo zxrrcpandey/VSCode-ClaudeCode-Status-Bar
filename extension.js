@@ -420,13 +420,13 @@ function maybeRemindAway() {
     const mute = 'Not this chat';
     if (s.waitingConfirmed) {
       vscode.window.showWarningMessage(
-        'Claude Pulse: ' + s.project + ' is waiting for your answer. It' + reload + ' Answering before then avoids it.',
+        'Claude Pulse: ' + chatName(s) + ' is waiting for your answer. It' + reload + ' Answering before then avoids it.',
         mute).then((c) => { if (c === mute) awayMuted[s.id] = Date.now() + 12 * 3600000; });
       return;
     }
     const copy = 'Copy /compact';
     vscode.window.showWarningMessage(
-      'Claude Pulse: stepping away? ' + s.project + reload
+      'Claude Pulse: stepping away? ' + chatName(s) + reload
         + ' Coming back to it later? Type /compact there now. Finished with it? Nothing to do.',
       copy, mute).then((c) => {
       if (c === copy) vscode.env.clipboard.writeText('/compact');
@@ -598,6 +598,16 @@ function refreshUsage() {
     if (err || !stdout) return;
     try { usageData = JSON.parse(stdout); render(); } catch { /* keep last data */ }
   });
+}
+
+/* Which chat a reminder is about, in words that pick it out: the folder alone
+ * cannot, when several chats are open in the same one. The title is the one
+ * Claude Code lists in /resume (the /rename one, else its own summary). */
+function chatName(s) {
+  let t = typeof s.title === 'string' ? s.title.trim() : '';
+  if (!t) return s.project;
+  if (t.length > 60) t = t.slice(0, 57) + '…';
+  return '“' + t + '” (' + s.project + ')';
 }
 
 function fmtTok(n) {
@@ -824,7 +834,7 @@ function limitTooltip(tip) {
   if (big) {
     const share = Math.round((big.turn ? big.turn.contextShare : 0) * 100);
     const turns = big.turn ? big.turn.turns || 0 : 0;
-    tip.appendMarkdown('\n**' + big.project + '** carries ' + fmtTok(big.ctx) + ' of context — ' +
+    tip.appendMarkdown('\n**' + chatName(big) + '** carries ' + fmtTok(big.ctx) + ' of context — ' +
       (turns >= 3
         ? share + '% of the cost of its last ' + turns + ' replies was re-reading it.'
         : share + '% of its latest reply was re-reading it.') +
@@ -1199,7 +1209,7 @@ function activate(context) {
           const turns = s.turn ? s.turn.turns || 0 : 0;
           const share = Math.round((s.turn ? s.turn.contextShare : 0) * 100);
           items.push({
-            label: s.project + ' — ' + fmtTok(s.ctx) + ' context',
+            label: chatName(s) + ' — ' + fmtTok(s.ctx) + ' context',
             description: (s.turn ? share + '% of ' + (turns >= 3 ? 'its last ' + turns + ' replies' : 'its latest reply') : 'just compacted') +
               (s.ctx >= limitSettings().contextWarn ? ' · worth running /compact' : ''),
             detail: cacheLine(s, Date.now()) || undefined,

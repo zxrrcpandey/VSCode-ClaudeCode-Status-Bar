@@ -107,6 +107,17 @@ struct SessionContext {
     /// A question or a permission prompt that a person really has to answer —
     /// not one Claude Code approved by itself a moment later.
     var waitingOnUser = false
+    /// The chat's own name as Claude Code lists it (/rename, else its own
+    /// summary). nil when the transcript's tail does not carry one.
+    var title: String? = nil
+
+    /// Which chat this is, in words that pick it out from the others: the
+    /// folder alone cannot, when several chats are open in the same one.
+    var named: String {
+        guard var t = title, !t.isEmpty else { return project }
+        if t.count > 60 { t = String(t.prefix(57)) + "…" }
+        return "“\(t)” (\(project))"
+    }
 
     /// Rounded once, here, so the banner and the menu cannot disagree about
     /// the same measurement by a point.
@@ -302,7 +313,8 @@ final class LimitReader {
                 repliedAt: (v["at"] as? Double) ?? 0,
                 cacheExpiresAt: (v["cacheExpiresAt"] as? Double) ?? 0,
                 reloadTimes: v["reloadTimes"] as? Double,
-                waitingOnUser: (v["waitingConfirmed"] as? Bool) ?? false))
+                waitingOnUser: (v["waitingConfirmed"] as? Bool) ?? false,
+                title: v["title"] as? String))
         }
         r.sessions.sort { $0.ctx > $1.ctx }
 

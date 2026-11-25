@@ -765,7 +765,8 @@ function sessionStats(file, seed) {
 function statsOverTail(file, bytes, seed) {
   const out = { ctx: 0, model: null, effort: null, at: 0, turn: null,
                 compactedAt: 0, compactTrigger: null, preTokens: null, postTokens: null, blocked: null,
-                cacheTtlMs: 0, cacheExpiresAt: 0, reloadTimes: null };
+                cacheTtlMs: 0, cacheExpiresAt: 0, reloadTimes: null, title: null };
+  let named = null, aiNamed = null;
   const agg = { cost: 0, cacheRead: 0, turns: 0 };
   const seenIds = {};
   for (const line of tailOf(file, bytes)) {
@@ -773,6 +774,17 @@ function statsOverTail(file, bytes, seed) {
     let j;
     try { j = JSON.parse(line); } catch { continue; }
     if (!j || j.isSidechain === true) continue;
+
+    // The chat's own name, as Claude Code lists it in /resume and its tabs:
+    // the one given with /rename, else the one it made up. It is the only
+    // thing that tells two chats in the same folder apart. Both are written
+    // again every few dozen kilobytes, so the tail nearly always holds one.
+    if (j.type === 'custom-title' && typeof j.customTitle === 'string' && j.customTitle.trim()) {
+      named = j.customTitle.trim(); continue;
+    }
+    if (j.type === 'ai-title' && typeof j.aiTitle === 'string' && j.aiTitle.trim()) {
+      aiNamed = j.aiTitle.trim(); continue;
+    }
 
     if (j.type === 'system' && j.subtype === 'compact_boundary') {
       const t = ms(j.timestamp);
@@ -850,6 +862,7 @@ function statsOverTail(file, bytes, seed) {
   // clock alone cannot establish that: a rejection with no resetsAt would
   // stand for ever, and a blocked report suppresses every other warning.
   if (out.blocked && out.at > out.blocked.at) out.blocked = null;
+  out.title = named || aiNamed;
   return out;
 }
 

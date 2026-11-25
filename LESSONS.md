@@ -1,7 +1,7 @@
 # Lessons
 
 Everything that went wrong while building Claude Pulse, why it went wrong, and what the code
-does about it now — from the first status bar item to 0.18.2.
+does about it now — from the first status bar item to 0.18.3.
 
 The README's [Troubleshooting](README.md#troubleshooting) covers some of the same ground by
 symptom, for someone *using* Pulse. This file is for someone *changing* it. There are two ways
@@ -583,6 +583,7 @@ found by review or test did not reach a release.
 | 0.18.2 | Hanging characters' heads cut off by the ceiling | Hung by hands that, held up, are lower than the head | Hang upside down by the feet or all four paws | test |
 | 0.18.2 | Speech bubble covered a character on the ceiling | Placed above a standing drawing, then clamped into the panel | Placed from where the drawing is; below it when there is no room above | test |
 | 0.18.2 | Red panda's tail lay along the ceiling; pup's ear pointed up at it | Drawn for standing; nothing turned them with the body | Tail turns over the back; ear turned against the body's turn | test |
+| 0.18.3 | A cost banner could not say which of several tabs in one project it meant | Sessions were named by their folder only | Named by the chat's own title (`custom-title`, else `ai-title`) with the folder after it | scan of the real chat |
 | 0.18.2 | Bobbed up to 3 px on and off the ceiling | The bob used in the air also ran on the ceiling | No bob on the ceiling | review |
 
 ## Known gaps

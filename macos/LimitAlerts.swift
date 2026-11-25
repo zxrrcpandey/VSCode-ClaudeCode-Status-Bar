@@ -329,9 +329,9 @@ extension AppDelegate {
         // about that reply, because output costs five times a cached read and
         // one short answer sends the share to 97% on its own.
         let measured = s.turns >= 3
-            ? "In \(s.project), re-reading the conversation has been about \(share)% of the cost of your "
+            ? "In \(s.named), re-reading the conversation has been about \(share)% of the cost of your "
                 + "last \(s.turns) replies — you pay for it on every turn."
-            : "In \(s.project), the latest reply spent about \(share)% of its cost re-reading the "
+            : "In \(s.named), the latest reply spent about \(share)% of its cost re-reading the "
                 + "conversation so far, and every reply after it pays that again."
         var actions = [
             BannerAction(title: "Copy “/compact”") {
@@ -382,12 +382,12 @@ extension AppDelegate {
         let title: String, body: String
         if s.waitingOnUser {
             title = "Claude is waiting — answer before \(by)"
-            body = "\(s.project) asked for your input and \(holds)"
+            body = "\(s.named) asked for your input and \(holds)"
                 + "after \(by) it has to load all of that again at full price\(cost). "
                 + "Answering before then avoids it."
         } else {
             title = "Stepping away? Compact before \(by)"
-            body = "\(s.project) last replied \(LimitFmt.ago(now - s.repliedAt)) ago and \(holds)"
+            body = "\(s.named) last replied \(LimitFmt.ago(now - s.repliedAt)) ago and \(holds)"
                 + "after \(by) your next message there has to load all of it again at full price\(cost). "
                 + "Coming back to it later? Type /compact in that chat now, while it is still cheap. "
                 + "Finished with it? Then there is nothing to do."
@@ -468,7 +468,7 @@ extension AppDelegate {
         let now = Date().timeIntervalSince1970 * 1000
         var unguarded = false
         for s in r.sessions.prefix(3) where s.ctx >= 120_000 && now - s.updatedAt < 4 * 60 * 60_000 {
-            menu.addItem(detail("\(s.project): \(LimitFmt.tokens(s.ctx)) context · "
+            menu.addItem(detail("\(s.named): \(LimitFmt.tokens(s.ctx)) context · "
                                 + "\(s.contextSharePct)% of recent replies is re-reading it", indent: 2))
             if let e = s.effort, e == "max" || e == "xhigh" {
                 menu.addItem(detail("↳ \(e) effort — costs several times medium", indent: 3))
