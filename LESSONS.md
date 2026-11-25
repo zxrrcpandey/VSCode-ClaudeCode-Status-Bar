@@ -1,7 +1,7 @@
 # Lessons
 
 Everything that went wrong while building Claude Pulse, why it went wrong, and what the code
-does about it now — from the first status bar item to 0.18.3.
+does about it now — from the first status bar item to 0.19.0.
 
 The README's [Troubleshooting](README.md#troubleshooting) covers some of the same ground by
 symptom, for someone *using* Pulse. This file is for someone *changing* it. There are two ways
@@ -357,8 +357,21 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
 - **The click area and the box are different things.** Only the drawn parts take clicks
   now, so the panel passes clicks through the empty corners. The whole box is still what
   is used to tell when the character has reached a screen edge.
-- **The character list lives in three places** — `CHARS` in `buddy.html`, the list and picker
-  in `extension.js`, the enum in `package.json` — and they have to change together.
+- **The character list lives in five places** — `CHARS` and the drawing in `buddy.html`, the
+  list and picker in `extension.js`, the enum and description in `package.json`,
+  `DesktopBuddy.characters` and the menu labels in `ClaudePulse.swift` — and they have to
+  change together. A name missing from the Swift list falls back to the red panda silently.
+- **A new way of moving is a trait, not a new kind.** The penguin's belly slide (`slide`), its
+  waddle (`rock`), the frog's hopping (`hopper`) and the owl's folded wings (`fold`,
+  `wingOff`) are each a flag in `CHARS` read in the one or two places that need it. A new
+  `kind` would have had to be taught to climbing, hanging, dropping and dragging as well.
+- **Every character starts mid-walk.** `activity` begins as `'walk'` with a target, before
+  the scheduler has run once, so a character that must never walk has to be turned away from
+  walking wherever a walk can begin — the frog did its first stroll on foot until the check
+  moved into the loop itself.
+- **A skill of zero should mean it never tries.** The leap option was offered to anything
+  that can jump, so a penguin with a 10% leap kept jumping at the ceiling and missing.
+  `canLeap` now needs a leap skill above zero.
 - **Something you can drag has to stay where it is put.** The character roamed everywhere,
   and nothing could move it off what it covered. Now it can be picked up, and once let go it
   parks until `parkUntil`. `scheduleNext()` and the flyers' rest both wait that out. The
@@ -478,6 +491,12 @@ The usage check runs `claude -p /usage`, which Claude Code answers without a mod
   before its passes on 0.18.1 were believed. The hang measurement put 0.18.1's drawings
   6.5–24.3 px past the top of the panel before it put 0.18.2's at 0.4 px at most. A test
   that passes on both says nothing about the fix.
+- **Look at a pose by freezing the page, not by timing a screenshot.** Headless Chrome's
+  `--virtual-time-budget` does not run `requestAnimationFrame`; replacing it with a 16 ms
+  `setTimeout` makes the page run on virtual time. To see one moment — a slide, a hop on the
+  way up — start it with the page's own functions (`startDash(w)`, `jump(...)`) and swap
+  `requestAnimationFrame` for a no-op at the chosen time. Screenshots taken "about when" it
+  happens caught a penguin standing up and a frog mid-backflip.
 - **A gap between two manual steps looks like staleness.** A reading that seemed 39 minutes
   old "right after refreshing" was the time between the two commands. Check the file's own
   timestamp.
@@ -584,6 +603,8 @@ found by review or test did not reach a release.
 | 0.18.2 | Speech bubble covered a character on the ceiling | Placed above a standing drawing, then clamped into the panel | Placed from where the drawing is; below it when there is no room above | test |
 | 0.18.2 | Red panda's tail lay along the ceiling; pup's ear pointed up at it | Drawn for standing; nothing turned them with the body | Tail turns over the back; ear turned against the body's turn | test |
 | 0.18.3 | A cost banner could not say which of several tabs in one project it meant | Sessions were named by their folder only | Named by the chat's own title (`custom-title`, else `ai-title`) with the folder after it | scan of the real chat |
+| 0.19.0 | New frog walked across the panel after loading | `activity` starts as a walk before the scheduler runs | A hopper turns any walk into hops in the loop | probe in headless Chrome |
+| 0.19.0 | New penguin kept leaping for the ceiling | Leaps were offered to anything that jumps | Offered only with a leap skill above zero | probe in headless Chrome |
 | 0.18.2 | Bobbed up to 3 px on and off the ceiling | The bob used in the air also ran on the ceiling | No bob on the ceiling | review |
 
 ## Known gaps

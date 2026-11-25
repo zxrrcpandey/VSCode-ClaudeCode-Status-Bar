@@ -29,7 +29,7 @@ climbing and flying across your real desktop on every monitor.
 It runs on Claude Code's own hooks and files. No API calls, no tokens, no account of its own.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/main/docs/images/characters.png" alt="The nine built-in characters: red panda, robot, cat, pup, tortoise, snail, bee, dragon and ghost">
+  <img src="https://raw.githubusercontent.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/main/docs/images/characters.png" alt="The thirteen built-in characters: red panda, robot, cat, pup, tortoise, snail, bee, dragon, ghost, penguin, fox, frog and owl">
 </p>
 
 **Contents**
@@ -66,7 +66,7 @@ It runs on Claude Code's own hooks and files. No API calls, no tokens, no accoun
 - **Cheaper conversations** — a `/compact` nudge when a chat has grown expensive, a one-click
   switch for Claude Code's own auto-compact point, and a reminder before an idle chat goes
   cold. → [Why a long conversation is the expensive part](#why-a-long-conversation-is-the-expensive-part)
-- **A buddy** — nine hand-drawn animated characters, or your own image, that pace while
+- **A buddy** — thirteen hand-drawn animated characters, or your own image, that pace while
   Claude works, ring when you are needed and celebrate when it is done. Click one and it
   tells you the status. → [The buddy](#the-buddy)
 - **On your real desktop, across every monitor** (macOS app) — the buddy can leave VS Code
@@ -386,23 +386,26 @@ Claude needs you, sleeps when idle, celebrates on done, goes dizzy on errors. **
 it talks back** — real status, task progress, and token counts in speech bubbles, calling you
 by the first name in your git config (or `claudePulse.buddyName`).
 
-Nine built-in characters with different bodies and personalities, each drawn with shading,
+Thirteen built-in characters with different bodies and personalities, each drawn with shading,
 fur or scales, and eyes that blink, close for a nap and squeeze shut on an error:
-🐾 Red panda (the default, `critter` in settings) and 🤖 Robot (two legs), 🐱 Cat, 🐶 Pup and
-🐢 Tortoise (four legs; the tortoise is small and very slow), 🐌 Snail (tiny and slowest),
-🐝 Bee (a honeybee, zips around the whole panel), 🐉 Dragon (big, slow wingbeats, glides
-everywhere), 👻 Ghost (floats).
+🐾 Red panda (the default, `critter` in settings), 🤖 Robot and 🐧 Penguin (two legs; the
+penguin waddles, and drops onto its belly to toboggan when it is in a hurry), 🐱 Cat, 🐶 Pup,
+🦊 Fox and 🐢 Tortoise (four legs; the tortoise is small and very slow), 🐸 Frog (never walks —
+it hops wherever it goes), 🐌 Snail (tiny and slowest), 🐝 Bee (a honeybee, zips around the
+whole panel), 🐉 Dragon (big, slow wingbeats, glides everywhere), 🦉 Owl (slow wingbeats, folds
+its wings to perch), 👻 Ghost (floats).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/zxrrcpandey/VSCode-ClaudeCode-Status-Bar/main/docs/images/panel.png" width="620" alt="Five characters drawn into one panel at different moments: a pup walking on the floor, a red panda climbing the right wall, a robot walking upside down along the ceiling, a cat hanging from the ceiling by all four paws, and a bee flying">
 </p>
 
-The panel is the character's whole world. The red panda, robot, cat, pup and snail climb the
-walls and cross the ceiling upside down, head first. The five with legs also leap for the
-ceiling, each with its own success rate. One that catches it turns over and hangs upside down
-for two to five seconds, swinging a little: the red panda and robot by their feet, the cat,
-pup and tortoise by all four paws. Then it crawls off along the ceiling, or lets go, rolls
-over and lands on its feet. The tortoise cannot climb, so it always lets go. Flyers use the
+The panel is the character's whole world. The red panda, robot, cat, pup, fox, frog and snail
+climb the walls and cross the ceiling upside down, head first. Those with legs also leap for
+the ceiling, each with its own success rate. One that catches it turns over and hangs upside
+down for two to five seconds, swinging a little: the red panda, robot and penguin by their
+feet, the cat, pup, fox, frog and tortoise by all four paws. Then it crawls off along the
+ceiling, or lets go, rolls over and lands on its feet. The tortoise and penguin cannot climb,
+so they always let go. Flyers use the
 whole height. (The picture above is several moments drawn into one panel; only one character
 is on screen at a time.)
 
@@ -431,7 +434,7 @@ you are needed, speech bubbles when you click it).
   a walker let go in mid-air drops to the floor first. It does not cross to another screen
   while it is staying put. A click without a drag still makes it talk. Change the stay with
   `defaults write com.warroom.claude-pulse buddyStaySeconds -float 1800`.
-- **Flyers use the whole height** of wherever they live — the bee, dragon and ghost roam
+- **Flyers use the whole height** of wherever they live — the bee, dragon, owl and ghost roam
   from the floor to just under the top of the screen.
 - **Size is a page zoom**, not a CSS zoom on the sprite: in WebKit, CSS `zoom` also scales
   the element's *position*, which sent a 1.6× bee off the right of the screen and left
@@ -439,7 +442,7 @@ you are needed, speech bubbles when you click it).
   *Buddy Size* offers Small, Normal, Large and Huge (0.7×, 1×, 1.6×, 2.4×).
 - **It recovers by itself.** If macOS kills the page's web process under memory pressure the
   buddy reloads, and a watchdog revives it if the page stops reporting its position for 5 s.
-- Menu: pick any of the nine characters or your own image, and a size.
+- Menu: pick any of the thirteen characters or your own image, and a size.
 - It is the *same* `buddy.html` the VS Code panel uses — hosted in a transparent
   non-activating panel — so the art, animation and dialogue live in one place.
 
@@ -522,7 +525,7 @@ Claude Code's cached usage (~/.claude.json) ──────────▶ li
 | Hooks | `hooks/hook.js`, a Node-style script Claude Code runs on 12 lifecycle events. Writes one JSON file per session, atomically, under a lock file. |
 | macOS app | **Swift** with AppKit, no Xcode project and no dependencies. `NSStatusItem` for the menu bar, `UserNotifications`, `ServiceManagement` (`SMAppService`) with a LaunchAgent fallback for starting at login, **WebKit** (`WKWebView` in non-activating `NSPanel`s) for the desktop buddy, and plain AppKit for the warning banners, so a killed web process can never blank a warning. |
 | `pulse-hook` | A small runner on **JavaScriptCore**, which ships with every Mac. It provides the slice of Node's `fs`, `path`, `os`, `process` and `console` the scripts use, so the very same hook, installer and scanner scripts run on a Mac with no Node.js. |
-| Buddy | One self-contained `buddy.html`: nine hand-drawn **SVG** characters animated with `requestAnimationFrame` and CSS transforms. Each moving part is its own composited layer, so the GPU moves pictures painted once rather than redrawing the drawing every frame. A strict content security policy with a per-load nonce; custom images are inlined as `data:` URIs. |
+| Buddy | One self-contained `buddy.html`: thirteen hand-drawn **SVG** characters animated with `requestAnimationFrame` and CSS transforms. Each moving part is its own composited layer, so the GPU moves pictures painted once rather than redrawing the drawing every frame. A strict content security policy with a per-load nonce; custom images are inlined as `data:` URIs. |
 | Build | `build.sh` compiles with `xcrun swiftc` for arm64 and x86_64 and joins them with `lipo` into a universal binary, then signs ad hoc. `make-dmg.sh` packs the disk image with `hdiutil`. `build-vsix.js` writes the extension manifest and zips the package itself, so it needs no `vsce` and runs on Node 18. `make-icon.swift` draws the app icon natively at each size. |
 | Tests | Node scripts, each building a throwaway `HOME` so it cannot touch your real setup, run under Node and again under `pulse-hook` so both runtimes give the same answers. |
 
@@ -607,7 +610,7 @@ quit an installed copy before testing a fresh build.
 | `claudePulse.awayReminder` | on | Say so about fifteen minutes before a large, idle conversation stops being cheap to come back to |
 | `claudePulse.awayWarnTokens` | 200000 | How large it has to be for that |
 | `claudePulse.keepUsageFresh` | on | Have Claude Code fetch a new usage reading once the one it holds has aged out; costs no tokens |
-| `claudePulse.buddyCharacter` | `critter` | `critter` (red panda), `robot`, `cat`, `pup`, `turtle` (tortoise), `snail`, `bee`, `dragon`, `ghost` |
+| `claudePulse.buddyCharacter` | `critter` | `critter` (red panda), `robot`, `cat`, `pup`, `turtle` (tortoise), `snail`, `bee`, `dragon`, `ghost`, `penguin`, `fox`, `frog`, `owl` |
 | `claudePulse.buddyImage` | empty | Path to your own image (PNG, JPG, WebP, SVG, animated GIF) |
 | `claudePulse.buddyName` | from git | The name the buddy calls you |
 | `claudePulse.buddyUsageRemarks` | on | Let the character mention a limit out loud; separate from `showLimits`, so you can keep the quiet badge without the commentary |

@@ -93,7 +93,8 @@ final class DesktopBuddy: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         }
     }
 
-    static let characters = ["critter", "robot", "cat", "pup", "turtle", "snail", "bee", "dragon", "ghost"]
+    static let characters = ["critter", "robot", "cat", "pup", "turtle", "snail", "bee", "dragon", "ghost",
+                              "penguin", "fox", "frog", "owl"]
 
     /// Character size, as a page zoom (Small 0.7 … Huge 2.4 from the menu).
     static var zoom: CGFloat {

@@ -152,6 +152,30 @@
         <!-- ghost -->
         <linearGradient id="ghBody" x1=".6" y1="0" x2=".3" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".97"/><stop offset=".55" stop-color="#e8eefa" stop-opacity=".9"/><stop offset="1" stop-color="#c9d5ec" stop-opacity="0"/></linearGradient>
         <radialGradient id="ghEye" cx=".5" cy=".4" r=".6"><stop offset="0" stop-color="#05070c"/><stop offset=".8" stop-color="#1d2433"/><stop offset="1" stop-color="#3a4560"/></radialGradient>
+        <!-- penguin -->
+        <radialGradient id="pgBack" cx=".55" cy=".2" r=".9"><stop offset="0" stop-color="#4a566a"/><stop offset=".5" stop-color="#1d232d"/><stop offset="1" stop-color="#090b0f"/></radialGradient>
+        <linearGradient id="pgBelly" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".6" stop-color="#eef1f5"/><stop offset="1" stop-color="#c3cad5"/></linearGradient>
+        <radialGradient id="pgPatch" cx=".5" cy=".4" r=".7"><stop offset="0" stop-color="#ffe58a"/><stop offset="1" stop-color="#f5a524"/></radialGradient>
+        <linearGradient id="pgBeak" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb24a"/><stop offset="1" stop-color="#d9631a"/></linearGradient>
+        <linearGradient id="pgFoot" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6a646"/><stop offset="1" stop-color="#c9621a"/></linearGradient>
+        <linearGradient id="pgFootFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c47a2a"/><stop offset="1" stop-color="#8e4410"/></linearGradient>
+        <linearGradient id="pgFlip" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0d1016"/><stop offset=".6" stop-color="#2c3444"/><stop offset="1" stop-color="#151a22"/></linearGradient>
+        <!-- fox -->
+        <radialGradient id="fxFur" cx=".45" cy=".25" r=".85"><stop offset="0" stop-color="#f8a65a"/><stop offset=".55" stop-color="#e2691c"/><stop offset="1" stop-color="#9a3c0a"/></radialGradient>
+        <linearGradient id="fxDark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a2c1a"/><stop offset="1" stop-color="#1a0e08"/></linearGradient>
+        <linearGradient id="fxFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b65218"/><stop offset=".45" stop-color="#7a3410"/><stop offset=".6" stop-color="#2a180e"/><stop offset="1" stop-color="#120a06"/></linearGradient>
+        <radialGradient id="fxIris" cx=".45" cy=".45" r=".6"><stop offset="0" stop-color="#ffe08a"/><stop offset=".6" stop-color="#e89a22"/><stop offset="1" stop-color="#8a4a08"/></radialGradient>
+        <!-- frog -->
+        <radialGradient id="fgSkin" cx=".45" cy=".2" r=".9"><stop offset="0" stop-color="#b4ea82"/><stop offset=".55" stop-color="#5fae3e"/><stop offset="1" stop-color="#2c6a20"/></radialGradient>
+        <linearGradient id="fgFar" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4c8e32"/><stop offset="1" stop-color="#2a5e1c"/></linearGradient>
+        <linearGradient id="fgBelly" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6f3c8"/><stop offset="1" stop-color="#d4cf86"/></linearGradient>
+        <radialGradient id="fgIris" cx=".45" cy=".4" r=".65"><stop offset="0" stop-color="#fff0a0"/><stop offset=".6" stop-color="#e6aa22"/><stop offset="1" stop-color="#8a5a08"/></radialGradient>
+        <!-- owl -->
+        <radialGradient id="owFeather" cx=".5" cy=".25" r=".85"><stop offset="0" stop-color="#c9a072"/><stop offset=".55" stop-color="#8e6038"/><stop offset="1" stop-color="#4e321a"/></radialGradient>
+        <radialGradient id="owFace" cx=".55" cy=".45" r=".6"><stop offset="0" stop-color="#fbf2e2"/><stop offset=".8" stop-color="#e6cfa8"/><stop offset="1" stop-color="#b89466"/></radialGradient>
+        <linearGradient id="owWing" x1="1" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#8a5e38"/><stop offset="1" stop-color="#4a2f18"/></linearGradient>
+        <linearGradient id="owFar" x1="1" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#5e3e22"/><stop offset="1" stop-color="#2e1c0e"/></linearGradient>
+        <radialGradient id="owIris" cx=".45" cy=".45" r=".6"><stop offset="0" stop-color="#ffe070"/><stop offset=".65" stop-color="#f29a1c"/><stop offset="1" stop-color="#a8520a"/></radialGradient>
       </defs>
       <ellipse id="shadow" cx="0" cy="40" rx="26" ry="3.2" fill="url(#shadowG)"/>
 
@@ -628,6 +652,200 @@
           <path d="M 13 0 C 18 2, 24 6, 27 11 C 28 13, 26 14.5, 24.5 13 C 21 9.5, 16 6, 12.5 5 Z" fill="#f4f7fd" opacity=".92"/>
         </g>
       </g>
+
+      <!-- penguin: waddles, and slides on its belly when in a hurry -->
+      <g id="body-penguin" style="display:none">
+        <g data-limb="legF" data-p="-4 33" fill="url(#pgFootFar)">
+          <path d="M -8 32 C -8.5 35, -8 37.5, -7 38.6 C -6.5 40.2, -4.5 40.3, -2 40.3 L 5 40.3 Q 7.4 40 6 38.4 C 4 37.4, 1.5 37, 0 35.5 L -0.5 32 Z"/>
+        </g>
+        <path fill="#10141a" d="M -12 27 L -21.5 37 Q -15 37.8 -8.5 34 Z"/>
+        <path fill="url(#pgBack)" d="M -1 -35 C 9 -35, 15 -28, 15.5 -19 C 16 -13, 19 -4, 19.5 6 C 20 20, 15 31, 5 35.5 C -2 38.5, -10 37.5, -14 32 C -18 26, -18 14, -16.5 2 C -15.5 -8, -14 -17, -13 -23 C -11.5 -31, -7 -35, -1 -35 Z"/>
+        <path fill="url(#pgBelly)" d="M 9 -16 C 15 -12, 18.6 -2, 19 7 C 19.6 19, 15.4 29.6, 6 34.6 C 0 37.4, -6 37, -9.5 34.6 C -2 31, 4 22, 5 10 C 5.8 1, 5 -8, 9 -16 Z"/>
+        <path fill="url(#pgPatch)" opacity=".95" d="M 9.6 -17.4 C 13 -15.4, 15.6 -12.4, 16.6 -8.4 C 13.2 -10.2, 10.2 -11, 7.6 -11.4 C 7.8 -13.6, 8.4 -15.6, 9.6 -17.4 Z"/>
+        <path fill="url(#pgPatch)" opacity=".9" d="M -1.6 -24 C 1 -24.6, 3.6 -22, 4.6 -18 C 5.4 -15, 5.6 -12.6, 4.6 -11 C 2.4 -13.4, 0.2 -17, -1.2 -20.4 C -1.8 -21.8, -2 -23, -1.6 -24 Z"/>
+        <path class="ln" d="M -9 -27 C -12.4 -17, -13.4 -4, -12.8 8" stroke="#7d8aa2" stroke-width="2.2" opacity=".35" filter="url(#soft)"/>
+        <path class="ln" d="M 12 -12 C 16 -6, 17.6 4, 17 14" stroke="#fff" stroke-width="2" opacity=".6" filter="url(#soft)"/>
+        <g data-limb="legN" data-p="6 33" fill="url(#pgFoot)">
+          <path d="M 2 32 C 1.5 35, 2 37.5, 3 38.6 C 3.5 40.2, 5.5 40.3, 8 40.3 L 15 40.3 Q 17.4 40 16 38.4 C 14 37.4, 11.5 37, 10 35.5 L 9.5 32 Z"/>
+          <path class="ln" d="M 11 39.2 L 12 40.2 M 13.4 38.8 L 14.6 40" stroke="#a8521a" stroke-width=".6"/>
+        </g>
+        <g class="eo">
+          <circle cx="9.6" cy="-25" r="3.3" fill="#fff"/>
+          <circle cx="10.4" cy="-25" r="2" fill="#120c08"/>
+          <circle cx="11" cy="-25.8" r=".7" fill="#fff"/>
+        </g>
+        <g class="es ln" stroke="#e8edf4" stroke-width="1.2"><path d="M 6.4 -25 Q 9.6 -22.4 12.8 -25"/></g>
+        <g class="ex ln" stroke="#e8edf4" stroke-width="1.2"><path d="M 7 -27.4 L 12.2 -25 L 7 -22.6"/></g>
+        <path fill="#c0521a" data-states="calm" d="M 14.6 -22.8 C 18.5 -22.4, 23 -22.6, 27 -23.2 C 23 -21, 18 -20.4, 14.8 -21 Z"/>
+        <g data-states="done">
+          <path fill="#5a1f1a" d="M 14.6 -22.8 C 19 -22.6, 23.4 -22.8, 27 -23.2 C 25 -19, 21 -16.6, 15 -19.6 Z"/>
+          <path fill="#c0521a" d="M 14.8 -21 C 19 -19.6, 22.6 -17.6, 24.6 -15.6 C 20.6 -16, 17.4 -17.4, 14.8 -19.4 Z"/>
+        </g>
+        <path fill="#c0521a" data-states="waiting" d="M 14.8 -22.6 C 19 -21.6, 23 -20.6, 25.6 -19.2 C 21.5 -18.6, 17.6 -19, 15 -20.2 Z"/>
+        <path fill="#c0521a" data-states="error" d="M 14.6 -22.8 C 18.5 -22.6, 22.6 -21.8, 25.6 -20.2 C 21.6 -19.8, 18 -20.2, 14.8 -21 Z"/>
+        <path fill="url(#pgBeak)" d="M 14.5 -26.6 C 19 -27.2, 24 -25.6, 27 -23.2 C 23 -22.6, 18.5 -22.4, 14.6 -22.8 Z"/>
+        <path class="ln" d="M 16 -25.6 Q 21 -25.8 25 -23.8" stroke="#ffe0b0" stroke-width=".7" opacity=".7"/>
+        <g data-limb="armN" data-p="5 -7">
+          <path fill="url(#pgFlip)" d="M 3 -9 C 8 -8, 10 0, 9.6 10 C 9.4 16, 8 21, 6 22.5 C 4.6 23.4, 3.6 22, 3.6 20 C 3.2 12, 1.6 2, 3 -9 Z"/>
+          <path class="ln" d="M 9.6 2 C 9.8 10, 8.6 18, 6.4 22" stroke="#e8edf4" stroke-width="1" opacity=".8"/>
+        </g>
+      </g>
+
+      <!-- fox: a red fox -->
+      <g id="body-fox" style="display:none">
+        <g data-limb="qff" data-p="13 16" fill="url(#fxFar)">
+          <path d="M 9 13 C 8.6 19, 9.2 25, 9.8 31 L 10 36.8 Q 10 40.3 13 40.3 L 16.8 40.3 Q 18.6 40.1 17.4 38.2 L 16.6 36.5 C 16.6 31, 17.4 25, 17.8 19 C 18 14, 15.8 11, 13.2 11 C 10.8 11, 9.1 11.6, 9 13 Z"/>
+        </g>
+        <g data-limb="qbf" data-p="-29 16" fill="url(#fxFar)">
+          <path d="M -36 12 C -38.5 18, -37.6 26, -34.6 31 L -33.6 36.8 Q -33.6 40.3 -30.6 40.3 L -26.8 40.3 Q -25 40.1 -26.2 38.2 L -27 36.4 L -27.4 31 C -25.6 26, -23.6 20, -24.4 14 C -25 10.4, -28 9.6, -31 9.8 C -33.6 10, -35.4 10.8, -36 12 Z"/>
+        </g>
+        <g data-limb="tail" data-p="-35 8">
+          <path filter="url(#fur)" fill="url(#fxFur)" d="M -33 3 C -41 -1, -52 0, -58.5 7 C -62.6 12, -60.6 19.6, -54.6 21 C -47 22.6, -40 17.6, -33 13 Z"/>
+          <path filter="url(#fur)" fill="#fbf6ee" d="M -56.2 8.4 C -60 11, -60.6 17.6, -55.6 20.6 C -52.4 21.8, -50 20.8, -48.8 19.4 C -52 17.4, -54.4 13.2, -56.2 8.4 Z"/>
+        </g>
+        <g data-limb="qbn" data-p="-23 16">
+          <path fill="url(#fxFur)" d="M -30 12 C -32.5 18, -31.6 26, -28.6 31 L -27.6 36.8 Q -27.6 40.3 -24.6 40.3 L -20.8 40.3 Q -19 40.1 -20.2 38.2 L -21 36.4 L -21.4 31 C -19.6 26, -17.6 20, -18.4 14 C -19 10.4, -22 9.6, -25 9.8 C -27.6 10, -29.4 10.8, -30 12 Z"/>
+          <path fill="url(#fxDark)" d="M -29.6 27 C -29.4 28.6, -29 30, -28.6 31 L -27.6 36.8 Q -27.6 40.3 -24.6 40.3 L -20.8 40.3 Q -19 40.1 -20.2 38.2 L -21 36.4 L -21.4 31 C -21 29.6, -20.6 28.4, -20.3 27 Z"/>
+        </g>
+        <g data-limb="qfn" data-p="19 16">
+          <path fill="url(#fxFur)" d="M 15 13 C 14.6 19, 15.2 25, 15.8 31 L 16 36.8 Q 16 40.3 19 40.3 L 22.8 40.3 Q 24.6 40.1 23.4 38.2 L 22.6 36.5 C 22.6 31, 23.4 25, 23.8 19 C 24 14, 21.8 11, 19.2 11 C 16.8 11, 15.1 11.6, 15 13 Z"/>
+          <path fill="url(#fxDark)" d="M 15.5 26 L 15.8 31 L 16 36.8 Q 16 40.3 19 40.3 L 22.8 40.3 Q 24.6 40.1 23.4 38.2 L 22.6 36.5 C 22.6 32, 23 29, 23.3 26 Z"/>
+        </g>
+        <clipPath id="foxBodyClip"><path d="M 24 8 C 22 -2, 10 -4, -4 -3 C -18 -2, -32 -3, -38 7 C -42 15, -38 25, -28 26.5 C -16 28, 0 26, 12 25 C 21 24, 26 17, 24 8 Z"/></clipPath>
+        <path filter="url(#fur)" fill="url(#fxFur)" d="M 24 8 C 22 -2, 10 -4, -4 -3 C -18 -2, -32 -3, -38 7 C -42 15, -38 25, -28 26.5 C -16 28, 0 26, 12 25 C 21 24, 26 17, 24 8 Z"/>
+        <g clip-path="url(#foxBodyClip)">
+          <ellipse cx="19" cy="14" rx="7.5" ry="12" fill="#fbf6ee" filter="url(#fur)"/>
+          <ellipse cx="-8" cy="27" rx="26" ry="5" fill="#f6e6d0" opacity=".7" filter="url(#soft)"/>
+          <ellipse cx="-5" cy="30" rx="34" ry="6" fill="#4a1a04" opacity=".2" filter="url(#soft)"/>
+          <path class="ln" d="M -17 26 C -15 18, -19 9, -29 6.5 M 13.5 24 C 12.5 16, 15 9.5, 20 6.5" stroke="#8a3a0c" stroke-width="1" opacity=".45"/>
+        </g>
+        <path fill="url(#fxFur)" d="M 17.5 -14 C 17 -22, 18.5 -31, 21 -37 C 25 -31, 28.5 -25, 29.5 -19 Z"/>
+        <path fill="#fbf0e0" opacity=".85" d="M 19.6 -17 C 19.4 -22, 20.2 -27.6, 21.4 -31 C 23.6 -27.6, 25.6 -24, 26.6 -20 Z"/>
+        <path fill="#24140c" d="M 19.6 -31.6 C 20 -33.6, 20.4 -35.4, 21 -37 C 22.4 -35, 23.6 -33.2, 24.6 -31.2 C 23 -31.8, 21.2 -32, 19.6 -31.6 Z"/>
+        <path fill="url(#fxFur)" d="M 29 -19.5 C 31 -27, 34.5 -33.5, 39 -38 C 40.6 -31, 40.4 -23, 38.6 -16 Z"/>
+        <path fill="#fbf0e0" opacity=".85" d="M 31.4 -19.6 C 33 -25, 35.4 -29.6, 38.2 -33 C 39 -28, 38.8 -23, 37.6 -18.6 Z"/>
+        <path fill="#24140c" d="M 35.6 -34.4 C 36.6 -35.8, 37.8 -37, 39 -38 C 39.6 -36, 39.9 -34, 40 -32 C 38.6 -33, 37 -33.8, 35.6 -34.4 Z"/>
+        <path filter="url(#fur)" fill="url(#fxFur)" d="M 16 -9 C 16 -18, 22 -22.5, 29 -22.5 C 35 -22.5, 39.5 -19.5, 42 -15 C 46 -11, 50 -7.5, 53 -5 C 54.6 -3.6, 53.8 -1.4, 52 -1 C 47 0.6, 41 2.4, 35 3.4 C 30 4.2, 24 4, 20.5 2 C 17 0, 16 -4, 16 -9 Z"/>
+        <path filter="url(#fur)" fill="#fbf6ee" d="M 18 -3 C 24 -5, 32 -4.6, 40 -3.2 C 45 -2.4, 49.5 -1.6, 52.6 -1.2 C 48 1.4, 41 3.6, 34 4.4 C 28 5, 22 4.2, 19 1.8 C 17.8 0.6, 17.4 -1.6, 18 -3 Z"/>
+        <path class="ln" d="M 38.8 -13.4 C 42.4 -10.8, 46.4 -7.8, 51 -5.4" stroke="#8a3a0c" stroke-width=".9" opacity=".55"/>
+        <g class="eo">
+          <path d="M 30.4 -13 Q 34.2 -16.8 38.4 -13.8 Q 34.4 -10.6 30.4 -13 Z" fill="url(#fxIris)" stroke="#2a1a10" stroke-width=".9"/>
+          <ellipse cx="34.6" cy="-13.4" rx=".8" ry="2.3" fill="#120a04"/>
+          <circle cx="35.6" cy="-14.6" r=".7" fill="#fff"/>
+        </g>
+        <g class="es ln" stroke="#2a1a10" stroke-width="1.1"><path d="M 30.4 -13.2 Q 34.4 -10.6 38.4 -13.6"/></g>
+        <g class="ex ln" stroke="#2a1a10" stroke-width="1.1"><path d="M 31 -15.4 L 37.4 -13.2 L 31 -11"/></g>
+        <ellipse cx="53.2" cy="-4.2" rx="1.9" ry="1.5" fill="#1a1210"/>
+        <ellipse cx="53" cy="-4.8" rx=".8" ry=".35" fill="#fff" opacity=".55"/>
+        <g class="ln" stroke="#3a1e10" stroke-width=".9">
+          <path data-states="calm" d="M 52 -1 C 49 0.6, 45 1.4, 42 1.2"/>
+          <path data-states="done" d="M 52.2 -1 C 49.6 3.6, 44.4 4.4, 41.6 1.4 C 45 1.4, 49 0.4, 52.2 -1 Z" fill="#5a1f1a"/>
+          <g data-states="waiting"><path d="M 52 -1 C 50 0, 48.4 0.6, 47 0.8"/><ellipse cx="45.6" cy="1.6" rx="1.4" ry="1.2" fill="#5a1f1a"/></g>
+          <path data-states="error" d="M 52 0.4 C 49 -0.6, 45 0.4, 42 2"/>
+        </g>
+        <path class="ln" d="M 49 -2.6 Q 53 -4 58 -3.6 M 48.6 -1.6 Q 53 -1.2 57.4 0.2" stroke="#2a1a10" stroke-width=".4" opacity=".7"/>
+      </g>
+
+      <!-- frog: hops everywhere -->
+      <g id="body-frog" style="display:none">
+        <g data-limb="qff" data-p="24 26" fill="url(#fgFar)">
+          <path d="M 21 25 C 20.4 29.6, 21 34, 22 37 L 20.6 40.3 L 28.6 40.3 Q 29.6 39.4 28 38.6 L 25.8 37.4 C 26 33.6, 26.2 29.6, 25.6 25 Z"/>
+        </g>
+        <g data-limb="qbf" data-p="-12 27" fill="url(#fgFar)">
+          <path d="M -20 22 C -27 26, -26 35, -19 37.8 L -8 39 Q 0 40.3 8 40.3 L 11 40.3 Q 12.8 39.6 11 38.4 L 0 36.6 C -4 35.4, -6 31.6, -6 27.4 C -6 21, -14 18.6, -20 22 Z"/>
+        </g>
+        <clipPath id="frogBodyClip"><path d="M -24 32 C -28 22, -20 10, -4 7 C 8 5, 20 4, 28 8 C 35 12, 39 19, 37.5 25.5 C 36 31, 29 34.5, 18 35.5 C 4 36.6, -18 37, -24 32 Z"/></clipPath>
+        <circle cx="14" cy="5" r="5.4" fill="url(#fgSkin)"/>
+        <path fill="url(#fgSkin)" d="M -24 32 C -28 22, -20 10, -4 7 C 8 5, 20 4, 28 8 C 35 12, 39 19, 37.5 25.5 C 36 31, 29 34.5, 18 35.5 C 4 36.6, -18 37, -24 32 Z"/>
+        <g clip-path="url(#frogBodyClip)">
+          <ellipse cx="10" cy="37" rx="30" ry="7" fill="url(#fgBelly)"/>
+          <ellipse cx="31" cy="29" rx="7" ry="5.4" fill="url(#fgBelly)"/>
+          <g fill="#2c5e1c" opacity=".55"><ellipse cx="-12" cy="14" rx="3.2" ry="2.2"/><ellipse cx="-3" cy="10.6" rx="2.6" ry="1.8"/><ellipse cx="-18" cy="22" rx="2.4" ry="1.8"/><ellipse cx="6" cy="15" rx="2.2" ry="1.6"/></g>
+          <path class="ln" d="M -16 12 C -6 7, 10 5.6, 24 7.4" stroke="#d8f6b0" stroke-width="1.6" opacity=".5" filter="url(#soft)"/>
+        </g>
+        <circle cx="22.8" cy="3.6" r="6.4" fill="url(#fgSkin)"/>
+        <ellipse cx="28" cy="16.6" rx="3" ry="1.8" fill="#ff9aa8" opacity=".35" filter="url(#soft)"/>
+        <g class="eo">
+          <circle cx="14.6" cy="4.6" r="3.6" fill="url(#fgIris)" stroke="#1f4a16" stroke-width=".6"/>
+          <ellipse cx="15" cy="4.6" rx="2.1" ry="1.1" fill="#120c04"/>
+          <circle cx="23.4" cy="3.4" r="4.4" fill="url(#fgIris)" stroke="#1f4a16" stroke-width=".7"/>
+          <ellipse cx="23.9" cy="3.4" rx="2.7" ry="1.4" fill="#120c04"/>
+          <circle cx="25" cy="1.8" r="1" fill="#fff"/>
+          <circle cx="15.8" cy="3.4" r=".7" fill="#fff"/>
+        </g>
+        <g class="es">
+          <circle cx="14.6" cy="4.6" r="3.8" fill="url(#fgSkin)"/><circle cx="23.4" cy="3.4" r="4.6" fill="url(#fgSkin)"/>
+          <path class="ln" d="M 11 4.8 Q 14.6 7 18.2 4.8 M 19 3.6 Q 23.4 6.4 27.8 3.6" stroke="#1f4a16" stroke-width="1"/>
+        </g>
+        <g class="ex">
+          <circle cx="14.6" cy="4.6" r="3.8" fill="url(#fgSkin)"/><circle cx="23.4" cy="3.4" r="4.6" fill="url(#fgSkin)"/>
+          <path class="ln" d="M 12 2.6 L 17 4.6 L 12 6.6 M 21 1.2 L 26.4 3.4 L 21 5.6" stroke="#1f4a16" stroke-width="1"/>
+        </g>
+        <circle cx="35.2" cy="14" r=".6" fill="#1f4a16"/>
+        <g class="ln" stroke="#1f4a16" stroke-width="1">
+          <path data-states="calm" d="M 37.6 21 C 32 23.6, 24 23.4, 17 20.6"/>
+          <g data-states="done">
+            <path d="M 37.6 21 C 32 28.6, 22 27.6, 17 20.6 C 24 23, 32 23.4, 37.6 21 Z" fill="#6a1f22"/>
+            <path d="M 24 24.6 C 26 26.6, 30 26.6, 32 24.4" stroke="#ff8a9a" stroke-width="2"/>
+          </g>
+          <g data-states="waiting"><path d="M 37.6 21 C 34 22.6, 30 23.2, 26 23"/><ellipse cx="31.6" cy="24.2" rx="1.6" ry="1.3" fill="#6a1f22"/></g>
+          <path data-states="error" d="M 37.6 22.8 C 32 21, 24 21, 17 23"/>
+        </g>
+        <g data-limb="qbn" data-p="-18 27" fill="url(#fgSkin)">
+          <path d="M -26 22 C -33 26, -32 35, -25 37.8 L -14 39 Q -6 40.3 2 40.3 L 5 40.3 Q 6.8 39.6 5 38.4 L -6 36.6 C -10 35.4, -12 31.6, -12 27.4 C -12 21, -20 18.6, -26 22 Z"/>
+          <g fill="#2c5e1c" opacity=".55"><ellipse cx="-22" cy="27" rx="2.4" ry="1.6"/><ellipse cx="-17" cy="31.6" rx="1.8" ry="1.3"/></g>
+          <path class="ln" d="M 1 39.6 L 4 40.3 M 3 38.6 L 6.4 39.2" stroke="#d8f6b0" stroke-width=".7" opacity=".8"/>
+        </g>
+        <g data-limb="qfn" data-p="28 26" fill="url(#fgSkin)">
+          <path d="M 26 25 C 25.4 29.6, 26 34, 27 37 L 25.6 40.3 L 33.6 40.3 Q 34.6 39.4 33 38.6 L 30.8 37.4 C 31 33.6, 31.2 29.6, 30.6 25 Z"/>
+          <g fill="#d8f6b0" opacity=".8"><circle cx="26" cy="40" r=".7"/><circle cx="30" cy="40.2" r=".7"/><circle cx="33.6" cy="39.8" r=".7"/></g>
+        </g>
+      </g>
+
+      <!-- owl: a tawny owl -->
+      <g id="body-owl" style="display:none">
+        <g data-limb="wingF" data-p="0 -4">
+          <path fill="url(#owFar)" d="M 2 -4 C -4 -16, -16 -28, -34 -32 C -40 -33, -42 -28, -38 -25 C -42 -22, -41 -17, -37 -16 C -40 -12, -38 -8, -33 -8 C -35 -4, -32 0, -27 0 C -18 1, -8 1, 2 -4 Z" transform="rotate(-8 0 -4)"/>
+        </g>
+        <path fill="#5e3e22" d="M -9 25 L -19 35 Q -13 35.4 -6 31 Z"/>
+        <path fill="url(#owFeather)" d="M -13 10 C -14 -4, -7 -11, 3 -11 C 13 -11, 18 -3, 18 9 C 18 23, 11 32, 2 32 C -8 32, -13 23, -13 10 Z"/>
+        <path fill="#ecd9b8" d="M 6 -6 C 14 -2, 17 8, 16.4 18 C 15.6 26, 10.6 31, 4 31.6 C 8.4 24, 9.4 12, 6 -6 Z"/>
+        <path class="ln" d="M 9.4 4 l 1.6 1.4 l 1.6 -1.4 M 10.4 10 l 1.6 1.4 l 1.6 -1.4 M 9.6 16 l 1.6 1.4 l 1.6 -1.4 M 12.6 21 l 1.4 1.2 l 1.4 -1.2 M 8.6 23 l 1.4 1.2 l 1.4 -1.2" stroke="#8e6038" stroke-width=".9"/>
+        <path class="ln" d="M -8 2 q 2 -1.6 4 0 M -6 9 q 2 -1.6 4 0 M -9 15 q 2 -1.6 4 0 M -4 20 q 2 -1.6 4 0" stroke="#f0dcb8" stroke-width=".8" opacity=".6"/>
+        <g data-limb="dangle" data-p="4 30" fill="#d9a73a">
+          <path d="M -1 29 L -1.6 34.6 L -4.6 37.6 L -2.6 38.2 L -0.6 36.6 L 0.6 38.6 L 2.2 36.4 L 4 37.8 L 5 37 L 2.6 34.6 L 2.6 29 Z"/>
+          <path d="M 6.6 29 L 6 34.6 L 3.8 37.8 L 5.8 38.2 L 7.4 36.6 L 8.8 38.6 L 10.2 36.4 L 12 37.6 L 12.8 36.8 L 10.2 34.4 L 10.2 29 Z"/>
+          <path class="ln" d="M -4.6 37.6 L -5.2 38.8 M 0.6 38.6 L 0.6 39.8 M 3.8 37.8 L 3.2 39 M 8.8 38.6 L 8.8 39.8 M 12.8 36.8 L 13.6 37.8" stroke="#3a2a1c" stroke-width=".9"/>
+        </g>
+        <path fill="url(#owFeather)" d="M -5 -27 L -8.6 -39.4 L 1.6 -31 Z"/>
+        <path fill="url(#owFeather)" d="M 8 -31 L 12.6 -42 L 15.6 -29 Z"/>
+        <ellipse cx="5" cy="-19" rx="14.5" ry="13.5" fill="url(#owFeather)"/>
+        <path class="ln" d="M -6 -26 q 2 -1.6 4 0 M -8 -19 q 2 -1.6 4 0 M -5 -12 q 2 -1.6 4 0" stroke="#f0dcb8" stroke-width=".8" opacity=".55"/>
+        <ellipse cx="10.4" cy="-18.4" rx="10.4" ry="10" fill="url(#owFace)" stroke="#6a4426" stroke-width=".9"/>
+        <g class="eo">
+          <circle cx="5.8" cy="-19.8" r="3.8" fill="url(#owIris)" stroke="#2a1a0c" stroke-width=".6"/>
+          <circle cx="6.2" cy="-19.8" r="2.1" fill="#0e0804"/>
+          <circle cx="14.4" cy="-19.6" r="4.6" fill="url(#owIris)" stroke="#2a1a0c" stroke-width=".7"/>
+          <circle cx="14.8" cy="-19.6" r="2.6" fill="#0e0804"/>
+          <circle cx="15.8" cy="-21" r="1.1" fill="#fff"/>
+          <circle cx="7" cy="-21" r=".8" fill="#fff"/>
+        </g>
+        <g class="es">
+          <circle cx="5.8" cy="-19.8" r="3.9" fill="#d9bf98"/><circle cx="14.4" cy="-19.6" r="4.7" fill="#d9bf98"/>
+          <path class="ln" d="M 2.4 -19.4 Q 5.8 -17 9.2 -19.4 M 10.2 -19.2 Q 14.4 -16.4 18.6 -19.2" stroke="#6a4426" stroke-width="1"/>
+        </g>
+        <g class="ex ln" stroke="#6a4426" stroke-width="1.1">
+          <path d="M 3.2 -22 L 8.4 -19.8 L 3.2 -17.6 M 17.6 -22.2 L 11.6 -19.6 L 17.6 -17"/>
+        </g>
+        <path fill="#c99a3a" d="M 9.2 -16 C 11.2 -16.4, 13.2 -15, 12.6 -12 C 12 -10.4, 10.8 -10.6, 10.8 -12 C 10.6 -13.4, 9.8 -14.8, 9.2 -16 Z"/>
+        <path data-states="done" d="M 10.8 -11.6 Q 11.8 -8.4 13.6 -10.6 Q 12.4 -11 10.8 -11.6 Z" fill="#7a2a22"/>
+        <ellipse data-states="waiting" cx="12" cy="-8.8" rx="1" ry="1.3" fill="#5a1e12"/>
+        <g data-limb="wingN" data-p="0 -4">
+          <path fill="url(#owWing)" d="M 2 -4 C -4 -16, -16 -28, -34 -32 C -40 -33, -42 -28, -38 -25 C -42 -22, -41 -17, -37 -16 C -40 -12, -38 -8, -33 -8 C -35 -4, -32 0, -27 0 C -18 1, -8 1, 2 -4 Z"/>
+          <path class="ln" d="M -6 -2 L -31 -4 M -10 -7 L -36 -12 M -14 -13 L -38 -21 M -18 -20 L -35 -29" stroke="#3a2410" stroke-width=".8" opacity=".8"/>
+          <path class="ln" d="M -14 -3 L -16 -6 M -22 -4 L -24 -8 M -20 -11 L -22 -14 M -28 -13 L -30 -17 M -24 -20 L -27 -23" stroke="#e6cfa8" stroke-width="1.4" opacity=".55"/>
+        </g>
+      </g>
     </svg>
     <div id="rig"></div>
   </div>
@@ -675,6 +893,13 @@
     bee:     { kind: 'flyer',  scale: 0.7,  ease: 0.06,  retarget: 0.02,  restP: 0.2,  flap: 9,   flapAmp: 32, bobAmp: 4, tricks: true, shadow: [3, 18] },
     dragon:  { kind: 'flyer',  scale: 1.5,  ease: 0.012, retarget: 0.002, restP: 0.4,  flap: 0.9, flapAmp: 18, bobAmp: 5, tail: [0.3, 5], shadow: [-2, 26] },
     ghost:   { kind: 'flyer',  scale: 1,    ease: 0.02,  retarget: 0,     restP: 0.35, flap: 0,   flapAmp: 0,  bobAmp: 3 },
+    // rock: degrees of side-to-side sway in its walk. slide: a dash is a belly
+    // slide. hopper: it gets about by hopping, never by walking. fold: wing
+    // angle when perched, wingOff: added to the beat in flight.
+    penguin: { kind: 'biped',  scale: 0.95, speed: 0.75, leap: 0,    climb: false, jumps: true,  rock: 11, slide: true, shadow: [0, 17] },
+    fox:     { kind: 'quad',   scale: 1,    speed: 1.35, leap: 0.75, climb: true,  jumps: true,  tail: [0.4, 9, 70], shadow: [-6, 36] },
+    frog:    { kind: 'quad',   scale: 0.8,  speed: 1.1,  leap: 0.5,  climb: true,  jumps: true,  hopper: true, shadow: [4, 32] },
+    owl:     { kind: 'flyer',  scale: 1.05, ease: 0.018, retarget: 0.004, restP: 0.45, flap: 1.6, flapAmp: 22, bobAmp: 4, fold: -72, wingOff: -14, shadow: [2, 18] },
   };
   const CHARACTER = "{{char}}";
   // In image mode the built-in art is hidden; if the image fails to load we
@@ -900,7 +1125,7 @@
     setEyes(state === 'error' ? 'dazed' : 'open');
   }
 
-  let bobT = 0, dir = 1, moving = false, squish = 1, swingAmt = 0;
+  let bobT = 0, dir = 1, moving = false, squish = 1, swingAmt = 0, slideAmt = 0;
   let y = 0, vy = 0;
   let flip = { active: false, start: 0, dur: 0, turns: 1 };
 
@@ -929,13 +1154,20 @@
       // No lean during a flip's last airborne frames — 360° ≡ 0°, land clean.
       rot = activity === 'flip' ? 0 : -vy * 3 * dir;
     } else if (moving) {
-      rot = AIR ? dir * 4 : activity === 'dash' ? 10 * dir : Math.sin(bobT * 9) * (C.kind === 'slider' ? 2 : 6);
+      rot = AIR ? dir * 4 : activity === 'dash' ? (C.slide ? 0 : 10 * dir)
+        : Math.sin(bobT * 9) * (C.rock || (C.kind === 'slider' ? 2 : 6));
     }
+    // A penguin in a hurry drops onto its belly, head first, and toboggans.
+    // It turns about the middle of the drawing and is lowered until the belly
+    // is on the floor: the middle is 40 units up, the belly 18 from it.
+    slideAmt += ((C.slide && activity === 'dash' && moving && grounded && !held ? 1 : 0) - slideAmt) * 0.2;
+    const sliding = slideAmt > 0.01;
+    if (sliding) rot += 90 * dir * slideAmt;
     if (AIR && airMode === 'waggle') rot += Math.sin(bobT * 14) * 14;   // dance wobble
     squish += (1 - squish) * 0.18;
     // The turn is about the middle of the box; swinging from the feet (the
     // bottom of the box, half its height away) is that turn plus a shift.
-    let sx = 0, sy = 0;
+    let sx = 0, sy = sliding ? CH * 19 / 120 * slideAmt : 0;
     if (sw && !held) {
       rot += sw;
       const h = CH / 2, t = surfCur * Math.PI / 180, a = sw * Math.PI / 180;
@@ -946,7 +1178,7 @@
     // The art fills the lower two thirds of the box; 67% is its middle.
     char.style.transformOrigin = held ? '50% 0%'
       : onSurface ? '50% 50%'
-      : (activity === 'flip' || flip.active || !grounded) ? '50% 67%' : '50% 100%';
+      : (activity === 'flip' || flip.active || !grounded || sliding) ? '50% 67%' : '50% 100%';
     // A climb keeps the mirror it started with: rotate(180) already turns the
     // drawing round, so mirroring by the way it crawls along the ceiling would
     // walk it backwards there.
@@ -968,6 +1200,8 @@
   const GRAV = 0.5; // px per frame², frame = 16.7ms
   const canJump = C.jumps !== false, canClimb = C.climb !== false;
   const leapSkill = C.leap || 0;
+  // One that never makes it does not try: a penguin does not leap for the ceiling.
+  const canLeap = canJump && leapSkill > 0;
 
   // ---- Picked up and put down ---------------------------------------------
   // Drag the character off whatever it is covering. It dangles while carried,
@@ -1065,7 +1299,13 @@
   function startRest(ts, ms) { activity = 'rest'; pauseUntil = ts + ms; }
   function startWalk(w) { activity = 'walk'; pickTarget(w); }
   function startDash(w) { activity = 'dash'; targetX = x < w / 2 ? innerR(w) : 20; }
-  function startHops(w, ts) { activity = 'hops'; hopsLeft = 2 + Math.floor(Math.random() * 3); pickTarget(w); jump(3 + Math.random() * 1.5, false, ts); }
+  function startHops(w, ts) {
+    activity = 'hops'; pickTarget(w);
+    // A hopper keeps hopping until it gets there; anyone else does a few.
+    hopsLeft = C.hopper ? 99 : 2 + Math.floor(Math.random() * 3);
+    jump(hopPower(), false, ts);
+  }
+  const hopPower = () => C.hopper ? 4 + Math.random() * 2 : 3 + Math.random() * 1.5;
   function startFlipJump(ts) {
     activity = 'flip'; targetX = x;
     const apex = Math.min(maxApex(), 45 + Math.random() * 70);
@@ -1094,19 +1334,21 @@
     const s = data.state;
     const opts = [];
     const add = (wt, fn) => { if (wt > 0) opts.push([wt, fn]); };
-    const walk = () => startWalk(w), dash = () => startDash(w), hops = () => startHops(w, ts);
+    const hops = () => startHops(w, ts);
+    const walk = C.hopper && !reduced ? hops : () => startWalk(w);
+    const dash = C.hopper && !reduced ? hops : () => startDash(w);
     const flipJ = () => startFlipJump(ts), clmb = () => startClimb(w), lp = () => startLeap(ts, w);
     if (s === 'idle') {
       add(40, walk); add(canJump ? 12 : 0, hops); add(canJump ? 6 : 0, flipJ);
-      add(canClimb ? 10 : 0, clmb); add(canJump ? 10 : 0, lp);
+      add(canClimb ? 10 : 0, clmb); add(canLeap ? 10 : 0, lp);
       add(22, () => startRest(ts, 1800 + Math.random() * 4500));
     } else if (s === 'working') {
       add(28, walk); add(16, dash); add(canJump ? 16 : 0, hops); add(canJump ? 10 : 0, flipJ);
-      add(canClimb ? 10 : 0, clmb); add(canJump ? 10 : 0, lp);
+      add(canClimb ? 10 : 0, clmb); add(canLeap ? 10 : 0, lp);
       add(10, () => startRest(ts, 250 + Math.random() * 800));
     } else if (s === 'done') {
       add(canJump ? 30 : 0, hops); add(canJump ? 25 : 0, flipJ); add(canClimb ? 13 : 0, clmb);
-      add(canJump ? 17 : 0, lp); add(15, walk); add(canJump ? 0 : 20, dash);
+      add(canLeap ? 17 : 0, lp); add(15, walk); add(canJump ? 0 : 20, dash);
     } else {
       add(60, walk); add(40, () => startRest(ts, 300 + Math.random() * 600));
     }
@@ -1141,6 +1383,9 @@
     } else if (held) {
       const k = Math.sin(bobT * 9) * 20;
       al = 150; ar = -150 + k * 0.4; ll = k; lr = -k; gesture = true;   // carried: arms up, legs kicking
+    }
+    if (slideAmt > 0.5) {
+      ar = 0; ll = 0; lr = 0; gesture = true;           // flipper flat along the body, feet together
     }
     if (ts < pointUntil) {
       ar = -92 + Math.sin(bobT * 3) * 4;              // arm out, pointing at you
@@ -1179,12 +1424,21 @@
       const ff = cling ? 0 : held ? -ll : grounded ? -walkA : -20;
       const bn = cling ? 0 : held ? -ll : grounded ? -walkA : 15;
       const bf = cling ? 0 : held ? ll : grounded ? walkA : 15;
-      R('qfn', fn); R('qff', ff);
-      R('qbn', bn); R('qbf', bf);
+      if (C.hopper && !grounded && !cling && !held) {
+        // A frog's jump: back legs flung out behind on the way up, folded
+        // again for landing; front legs reach ahead.
+        const kick = vy > 1 ? 58 : 12;
+        R('qfn', -28); R('qff', -24); R('qbn', kick); R('qbf', kick * 0.9);
+      } else {
+        R('qfn', fn); R('qff', ff);
+        R('qbn', bn); R('qbf', bf);
+      }
     } else if (C.kind === 'flyer') {
       if (C.flap) {
         // Both wings beat together; they fold while napping on the floor.
-        const a = airMode === 'nap' ? 0 : Math.sin(bobT * C.flap * 6.283) * C.flapAmp + (moving ? 8 : 0);
+        const perched = airMode === 'nap' || (C.fold !== undefined && !moving && y <= 0.5);
+        const a = perched ? (C.fold || 0)
+          : Math.sin(bobT * C.flap * 6.283) * C.flapAmp + (moving ? 8 : 0) + (C.wingOff || 0);
         R('wingN', a); R('wingF', a * 0.9);
       }
       // Ghost arm: gentle float pose unless a gesture is active.
@@ -1216,7 +1470,9 @@
     const steps = dt / 16.7;
     const w = Math.max(120, stage.clientWidth);
     const speed = (data.state === 'working' ? 1.6 : data.state === 'done' ? 1.0 : data.state === 'idle' ? 0.35 : 0.5)
-      * walkMul * (C.speed || 1) * (activity === 'dash' ? 3.2 : 1);
+      * walkMul * (C.speed || 1) * (activity === 'dash' ? 3.2 : 1)
+      // A hopper covers its ground in the air, not between hops.
+      * (C.hopper && activity === 'hops' ? 3 : 1);
     const resting = ts < pauseUntil || ts < pointUntil;
     // Re-clamp targets to the current panel size — a resize mid-walk would
     // otherwise leave an unreachable target pinning the buddy to the wall.
@@ -1336,6 +1592,11 @@
         }
       }
     } else {
+      // A hopper never walks: wherever a walk was started — the first one
+      // after loading included — it hops there instead.
+      if (C.hopper && activity === 'walk' && !reduced && !resting && y <= 0.5) {
+        activity = 'hops'; hopsLeft = 99; jump(hopPower(), false, ts);
+      }
       moving = !reduced && !resting && Math.abs(targetX - x) > 0.5 && activity !== 'flip' && activity !== 'drop' && activity !== 'leap';
       // Leap: crouch briefly, then launch at the ceiling.
       if (activity === 'leap' && leap && leap.phase === 'crouch' && !resting && ts >= leap.until) {
@@ -1378,7 +1639,7 @@
           if (y <= 0) {
             y = 0; vy = 0; squish = 0.78; flip.active = false;
             if (activity === 'hops') {
-              if (hopsLeft > 0) { hopsLeft--; jump(3 + Math.random() * 1.5, false, ts); }
+              if (hopsLeft > 0 && (!C.hopper || Math.abs(targetX - x) > 0.5)) { hopsLeft--; jump(hopPower(), false, ts); }
               else scheduleNext(ts);
             } else if (activity === 'leap' && leap && leap.phase === 'air') {
               // Missed — tumble, see stars, dust off.
@@ -1403,7 +1664,8 @@
     if (AIR) y = Math.max(0, Math.min(y, maxApex()));
 
     // Walk cycle: legs step while walking on the floor OR crawling a surface.
-    const legsActive = !AIR && moving && (y <= 0.5 || activity === 'climb');
+    const legsActive = !AIR && moving && (y <= 0.5 || activity === 'climb') && !(C.hopper && activity === 'hops')
+      && !(slideAmt > 0.5);
     const gait = C.kind === 'quad' ? 22 : 26;
     walkA += ((legsActive ? Math.sin(bobT * (C.speed < 0.5 ? 5 : 10)) * (activity === 'climb' ? 18 : gait) : 0) - walkA) * Math.min(1, 0.25 * steps);
     // Eyes close while resting between strolls, blink now and then otherwise.

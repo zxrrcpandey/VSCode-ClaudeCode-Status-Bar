@@ -37,7 +37,7 @@ const AWAY_LEAD_MS = 15 * 60 * 1000;
 // Where Claude Code's own auto-compact point can be moved to. The first is the
 // one offered by name; see scripts/set-autocompact.js for where it comes from.
 const COMPACT_PRESETS = [250000, 400000];
-const CHARACTERS = ['critter', 'robot', 'cat', 'pup', 'turtle', 'snail', 'bee', 'dragon', 'ghost'];
+const CHARACTERS = ['critter', 'robot', 'cat', 'pup', 'turtle', 'snail', 'bee', 'dragon', 'ghost', 'penguin', 'fox', 'frog', 'owl'];
 
 // The buddy addresses the user by name: claudePulse.buddyName wins, otherwise
 // the first name from git config user.name. Sanitized — it lands in webview HTML.
@@ -1120,6 +1120,10 @@ function activate(context) {
         { label: '🐝 Bee', description: 'a honeybee, buzzing wings · flies everywhere', id: 'bee' },
         { label: '🐉 Dragon', description: 'big, slow wingbeats · glides the whole panel', id: 'dragon' },
         { label: '👻 Ghost', description: 'floats, never sleeps quietly', id: 'ghost' },
+        { label: '🐧 Penguin', description: 'waddles · belly-slides when in a hurry', id: 'penguin' },
+        { label: '🦊 Fox', description: 'red fox, bushy tail · quick, climbs, leaps 75%', id: 'fox' },
+        { label: '🐸 Frog', description: 'never walks — hops everywhere, climbs walls', id: 'frog' },
+        { label: '🦉 Owl', description: 'slow wingbeats · folds its wings to perch', id: 'owl' },
         { label: '🖼️ My own image…', description: 'PNG / JPG / WebP / SVG / animated GIF', id: 'image' },
       ], { placeHolder: 'Pick your buddy character' });
       if (!choice) return;
